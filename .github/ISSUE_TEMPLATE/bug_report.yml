@@ -1,0 +1,51 @@
+name: Bug report
+description: Report reproducible incorrect behavior in LoopEval.
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Remove API keys and sensitive evaluation samples. Security issues belong
+        in a private GitHub security advisory, not this form.
+  - type: input
+    id: version
+    attributes:
+      label: LoopEval version
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider path
+      options:
+        - Offline mock
+        - TypeSafe direct
+        - OpenRouter Decisions
+        - OpenRouter fallback
+        - OpenAI fallback
+        - OpenAI-compatible fallback
+        - Custom provider
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include sanitized config, checks, sample, command, and traceback.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: Python version, operating system, install method
+    validations:
+      required: true

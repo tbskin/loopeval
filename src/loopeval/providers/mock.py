@@ -1,0 +1,127 @@
+from __future__ import annotations
+
+import time
+from typing import Any
+
+from ..config import ProviderConfig
+from ..models import (
+    DecisionAnswer,
+    DecisionResponse,
+    ProviderUsage,
+    QuestionKind,
+    TypedQuestion,
+)
+from .base import DecisionProvider, GenerativeProvider
+
+
+class MockDecisionProvider(DecisionProvider):
+    def __init__(self, config: ProviderConfig) -> None:
+        self.name = "mock"
+        self.model = config.model or "mock-decision"
+        self.responses = config.mock_responses
+
+    async def decide(
+        self, state: dict[str, Any], questions: list[TypedQuestion]
+    ) -> DecisionResponse:
+        started = time.perf_counter()
+        marker = str(state.get("output", ""))
+        learned_novel_check = any(question.id == "learned.novel_pattern" for question in questions)
+        answers: dict[str, DecisionAnswer] = {}
+        for question in questions:
+            configured = self.responses.get(question.id)
+            if isinstance(configured, dict):
+                answers[question.id] = DecisionAnswer.model_validate(
+                    {"kind": question.kind, **configured}
+                )
+            elif question.kind == QuestionKind.NOUL:
+                value = 0.95 if "[FAIL]" in marker else 0.7 if "[UNCERTAIN]" in marker else 0.05
+                if (question.id == "learned.novel_pattern" and "[NOVEL]" in marker) or (
+                    question.id == "__loopeval_coverage__"
+                    and "[NOVEL]" in marker
+                    and not learned_novel_check
+                ):
+                    value = 0.95
+                answers[question.id] = DecisionAnswer(kind=question.kind, noul=value)
+            elif question.kind == QuestionKind.CHOICE:
+                choices = question.criteria if isinstance(question.criteria, dict) else {"pass": ""}
+                label = next(iter(choices.keys()))
+                answers[question.id] = DecisionAnswer(
+                    kind=question.kind,
+                    choice=str(label),
+                    confidence=0.95,
+                    probabilities={str(label): 0.95},
+                )
+            else:
+                answers[question.id] = DecisionAnswer(
+                    kind=question.kind,
+                    score=0.0,
+                    confidence=0.95,
+                    probabilities={"0": 0.95},
+                )
+        return DecisionResponse(
+            answers=answers,
+            provider=self.name,
+            model=self.model,
+            usage=ProviderUsage(),
+            latency_ms=round((time.perf_counter() - started) * 1000),
+        )
+
+
+class MockGenerativeProvider(GenerativeProvider):
+    def __init__(self, config: ProviderConfig) -> None:
+        self.name = "mock"
+        self.model = config.model or "mock-generative"
+        self.responses = config.mock_responses
+
+    async def generate_structured(
+        self,
+        *,
+        system: str,
+        user: str,
+        schema: dict[str, Any],
+        schema_name: str,
+    ) -> tuple[dict[str, Any], ProviderUsage, int]:
+        if self.responses.get("verdict"):
+            return dict(self.responses["verdict"]), ProviderUsage(), 0
+        if "[NOVEL]" in user:
+            return (
+                {
+                    "category": "novel_failure",
+                    "existing_check_id": None,
+                    "label": "novel-pattern",
+                    "title": "Novel pattern",
+                    "description": "The sample contains the offline demo's novel marker.",
+                    "severity": "error",
+                    "evidence": "The output contains [NOVEL].",
+                    "confidence": 0.95,
+                    "candidate_check": {
+                        "id": "learned.novel_pattern",
+                        "name": "Novel pattern",
+                        "description": "Detect the demonstrated novel failure pattern.",
+                        "kind": "noul",
+                        "instructions": "Does the output exhibit the reviewed novel failure pattern?",
+                        "criteria": {
+                            "true": "The reviewed failure pattern is present.",
+                            "false": "The reviewed failure pattern is absent.",
+                        },
+                        "severity": "error",
+                    },
+                },
+                ProviderUsage(),
+                0,
+            )
+        return (
+            {
+                "category": "acceptable",
+                "existing_check_id": None,
+                "label": "acceptable",
+                "title": "Acceptable",
+                "description": "No material issue found.",
+                "severity": "info",
+                "evidence": "No known or novel failure was found.",
+                "confidence": 0.9,
+                "candidate_check": None,
+            },
+            ProviderUsage(),
+            0,
+        )
