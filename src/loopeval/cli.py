@@ -10,6 +10,7 @@ import yaml
 
 from . import __version__
 from .api import LoopEval
+from .bootstrap import propose_initial_checks
 from .checks import load_checks
 from .config import LoopEvalConfig, load_config
 from .io import load_samples
@@ -20,6 +21,7 @@ from .learning import (
     validation_metrics,
 )
 from .models import CandidateCheck, ResultStatus
+from .providers import build_generative_provider
 from .reporting import compare_reports, report_summary
 from .storage import LocalStore
 
@@ -337,6 +339,52 @@ def run_command(
         if output:
             output.write_text(report.model_dump_json(indent=2) + "\n")
             typer.echo(f"Wrote {output}")
+
+
+@app.command()
+def bootstrap(
+    scenarios: Annotated[
+        Path,
+        typer.Option("--scenarios", help="Representative JSON or JSONL application scenarios."),
+    ],
+    requirements: Annotated[
+        Path,
+        typer.Option("--requirements", help="Product requirements or evaluation policy."),
+    ],
+    config_path: Annotated[Path, typer.Option("--config", "-c")] = Path("loopeval.yaml"),
+    max_checks: Annotated[
+        int, typer.Option("--max-checks", min=1, max=20, help="Maximum proposed checks.")
+    ] = 8,
+    max_samples: Annotated[
+        int, typer.Option("--max-samples", min=1, help="Maximum scenarios sent to the LLM.")
+    ] = 25,
+) -> None:
+    """Propose an initial, reviewable check library from requirements and scenarios."""
+    config = load_config(config_path)
+    samples = load_samples(scenarios)
+    provider = build_generative_provider(config.providers.fallback)
+    if provider is None:
+        raise typer.BadParameter("bootstrap requires a configured LLM fallback provider")
+    store = _store(config)
+    try:
+        proposal, keys = asyncio.run(
+            propose_initial_checks(
+                provider=provider,
+                requirements=requirements.read_text(),
+                samples=samples[:max_samples],
+                active_checks=load_checks(config.checks),
+                store=store,
+                max_checks=max_checks,
+                max_chars=config.budgets.max_state_chars,
+            )
+        )
+        typer.echo(proposal.summary)
+        for key, item in zip(keys, proposal.candidates, strict=True):
+            typer.echo(f"{key}  {item.check.id}  {item.check.name}")
+        typer.echo("Next: inspect with 'loopeval candidates' and 'loopeval candidate <id>'.")
+        typer.echo("Candidates are not active until reviewed, validated, and promoted.")
+    finally:
+        store.close()
 
 
 @app.command()

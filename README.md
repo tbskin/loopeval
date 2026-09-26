@@ -182,10 +182,37 @@ Only `input` is required. Common optional fields are:
 | `labels` | Human labels used for candidate validation |
 | `expected_verdict` | Optional expected overall result |
 
-## Define checks
+## Build your first evaluation library
+
+Describe the behavior your application must follow in a short Markdown file.
+Then let the configured LLM propose a focused initial check library from those
+requirements and representative scenarios:
+
+```bash
+loopeval bootstrap \
+  --requirements requirements.md \
+  --scenarios samples.jsonl
+
+loopeval candidates --status proposed
+loopeval candidate cand_abc123
+```
+
+Bootstrap proposals are untrusted candidates. They do not become active checks
+automatically. Review their scope, label a holdout dataset, validate them, and
+promote only the checks that meet your configured quality policy. This gives the
+LLM responsibility for discovering and expressing potential checks without
+letting it silently change evaluation policy.
+
+After the initial library is active, LoopEval continues the same process during
+normal runs. Jev handles known checks. Uncertain or uncovered scenarios go to
+the LLM, which can propose additional candidates. Reviewed candidates that pass
+held-out validation become active Jev checks, reducing future fallback use.
+
+## Customize checks by hand
 
 Checks are versioned YAML files that can be reviewed and committed with your
-evaluation suite.
+evaluation suite. Manual authoring is useful for exact application invariants or
+when you need direct control over a check's boundary.
 
 Use deterministic checks when code can calculate the answer exactly:
 
@@ -325,6 +352,7 @@ or using results in high-impact workflows.
 | --- | --- |
 | `loopeval init` | Create configuration, starter checks, and sample data |
 | `loopeval doctor` | Validate configuration, checks, directories, and key references |
+| `loopeval bootstrap` | Propose initial checks from requirements and representative scenarios |
 | `loopeval run` | Run the complete evaluation pipeline |
 | `loopeval report` | Read a stored run report |
 | `loopeval compare` | Compare verdicts, escalation rate, and cost across two runs |

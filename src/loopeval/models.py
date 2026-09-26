@@ -285,6 +285,21 @@ class CandidateCheck(BaseModel):
         )
 
 
+class BootstrapCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    check: CandidateCheck
+    rationale: str = Field(min_length=1)
+    confidence: float = Field(ge=0, le=1)
+
+
+class BootstrapProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str = Field(min_length=1)
+    candidates: list[BootstrapCandidate] = Field(min_length=1, max_length=20)
+
+
 class FallbackVerdict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

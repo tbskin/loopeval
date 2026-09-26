@@ -12,9 +12,10 @@ from loopeval.learning import (
     fenced_sample,
     meets_promotion_policy,
     promote_candidate,
+    strict_provider_schema,
     validation_metrics,
 )
-from loopeval.models import CandidateCheck
+from loopeval.models import BootstrapProposal, CandidateCheck
 from loopeval.storage import LocalStore
 
 
@@ -66,6 +67,8 @@ def test_fallback_schema_is_strict_provider_compatible() -> None:
     candidate_schema = schema["$defs"]["CandidateCheck"]
     assert set(candidate_schema["required"]) == set(candidate_schema["properties"])
     assert candidate_schema["additionalProperties"] is False
+    bootstrap = strict_provider_schema(BootstrapProposal)
+    assert set(bootstrap["required"]) == set(bootstrap["properties"])
 
 
 def test_promotion_requires_review_and_validation(tmp_path: Path) -> None:

@@ -81,6 +81,33 @@ class MockGenerativeProvider(GenerativeProvider):
         schema: dict[str, Any],
         schema_name: str,
     ) -> tuple[dict[str, Any], ProviderUsage, int]:
+        if schema_name == "loopeval_bootstrap":
+            return (
+                {
+                    "summary": "A focused starter check for the supplied application requirements.",
+                    "candidates": [
+                        {
+                            "check": {
+                                "id": "quality.requirement_violation",
+                                "name": "Requirement violation",
+                                "description": "The output violates a supplied product requirement.",
+                                "kind": "noul",
+                                "instructions": "Does `output` violate a material supplied requirement?",
+                                "criteria": {
+                                    "true": "A material supplied requirement is violated.",
+                                    "false": "The output follows the supplied requirements.",
+                                },
+                                "requires": ["output"],
+                                "severity": "error",
+                            },
+                            "rationale": "The scenarios require a semantic product-policy judgment.",
+                            "confidence": 0.8,
+                        }
+                    ],
+                },
+                ProviderUsage(),
+                0,
+            )
         if self.responses.get("verdict"):
             return dict(self.responses["verdict"]), ProviderUsage(), 0
         if "[NOVEL]" in user:

@@ -11,7 +11,8 @@ evaluation suite.
 
 LoopEval repository: https://github.com/tbskin/loopeval
 Application area to evaluate: [OPTIONAL: feature, pipeline, or agent]
-Preferred provider path: [OPTIONAL: OpenRouter, TypeSafe direct, or offline only]
+Preferred Jev path: [OPTIONAL: TypeSafe direct or OpenRouter]
+Preferred LLM path: [OPTIONAL: OpenAI direct, OpenRouter, compatible endpoint, or none]
 Existing evaluation dataset: [OPTIONAL: path or description]
 
 Please do the following:
@@ -29,21 +30,24 @@ Please do the following:
    - a short README explaining how to run the suite
 5. Map application records into LoopEval's input, output, context, expected,
    trace, metadata, and data fields as appropriate. Preserve stable sample ids.
-6. Start with deterministic checks for facts that code can calculate exactly.
-   Add only a small number of narrow semantic checks whose answers require
-   understanding language.
-7. Run the complete workflow offline first with mock providers:
+6. Create a concise requirements.md describing the behavior these scenarios
+   should satisfy. Run `loopeval bootstrap` to propose a small initial check
+   library. Do not activate proposals automatically.
+7. Review the proposed checks with me. Prefer deterministic checks for facts
+   that code can calculate exactly. Keep semantic checks narrow and limited to
+   questions that require understanding language.
+8. Run the complete workflow offline first with mock providers:
    - loopeval doctor
    - loopeval run <dataset>
    Confirm that artifacts are written locally and that no credential is needed.
-8. Prepare the requested real-provider configuration, but reference API keys by
+9. Prepare the requested real-provider configuration, but reference API keys by
    environment-variable name only. Never write, print, request, or commit an
    actual key. If the provider choice is unspecified, keep the offline setup and
    document the OpenRouter option without enabling it.
-9. Add a project-native test or CI command that runs the evaluation suite only
+10. Add a project-native test or CI command that runs the evaluation suite only
    if doing so is deterministic and does not require a secret in pull requests.
-10. Run the application's existing tests plus the new evaluation smoke test.
-11. Summarize:
+11. Run the application's existing tests plus the new evaluation smoke test.
+12. Summarize:
     - files created or changed
     - how samples map into LoopEval
     - checks added and why

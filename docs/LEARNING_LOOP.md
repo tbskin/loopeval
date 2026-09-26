@@ -1,5 +1,27 @@
 # Learning and promotion loop
 
+## Initial bootstrap
+
+Users should not need to hand-author the first semantic check library. Bootstrap
+uses the configured LLM fallback to turn product requirements and representative
+scenarios into a small set of candidate deterministic and semantic checks:
+
+```bash
+loopeval bootstrap \
+  --requirements requirements.md \
+  --scenarios samples.jsonl
+```
+
+The scenarios are fenced as untrusted data. Provider output is validated against
+the same `CandidateCheck` schema used by ongoing discovery. A bootstrap proposal
+cannot overwrite an active check or invent executable deterministic code. It can
+select only registered deterministic rules.
+
+Bootstrap candidates enter the normal `proposed` state. They require review and
+held-out validation before promotion. Bootstrap is therefore a faster way to
+express an initial evaluation policy, not a way for a model to approve its own
+policy.
+
 ## Why promotion is deliberately slow
 
 An LLM fallback is a teacher, not ground truth. Allowing it to write and approve

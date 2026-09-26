@@ -131,6 +131,30 @@ def test_offline_cli_end_to_end(tmp_path: Path) -> None:
     assert json.loads(compared.output)["escalation_rate_change"] == -0.5
 
 
+def test_offline_bootstrap_creates_inactive_candidate(tmp_path: Path) -> None:
+    project = tmp_path / "demo"
+    assert runner.invoke(app, ["init", str(project), "--offline"]).exit_code == 0
+    requirements = project / "requirements.md"
+    requirements.write_text("Answers must comply with the supplied product policy.\n")
+    result = runner.invoke(
+        app,
+        [
+            "bootstrap",
+            "--scenarios",
+            str(project / "samples.jsonl"),
+            "--requirements",
+            str(requirements),
+            "-c",
+            str(project / "loopeval.yaml"),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "quality.requirement_violation" in result.output
+    assert "not active" in result.output
+    listed = runner.invoke(app, ["candidates", "-c", str(project / "loopeval.yaml")])
+    assert "quality.requirement_violation" in listed.output
+
+
 def test_init_refuses_overwrite_and_version(tmp_path: Path) -> None:
     project = tmp_path / "demo"
     assert runner.invoke(app, ["init", str(project), "--offline"]).exit_code == 0

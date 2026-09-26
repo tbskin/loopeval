@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import BaseModel
 
 from .config import PromotionPolicy
 from .models import (
@@ -36,12 +37,12 @@ arithmetic, parsing, counting, exact matching, or other deterministic work.
 """
 
 
-def fallback_schema() -> dict[str, Any]:
+def strict_provider_schema(model: type[BaseModel]) -> dict[str, Any]:
     # Strict structured-output APIs require every property to be listed in
     # `required`, including nullable fields. Pydantic leaves defaulted fields
     # optional, so normalize the schema before sending it to a provider. Local
     # Pydantic validation remains the final trust boundary.
-    schema = FallbackVerdict.model_json_schema()
+    schema = model.model_json_schema()
 
     def normalize(node: Any) -> None:
         if isinstance(node, dict):
@@ -58,6 +59,10 @@ def fallback_schema() -> dict[str, Any]:
 
     normalize(schema)
     return schema
+
+
+def fallback_schema() -> dict[str, Any]:
+    return strict_provider_schema(FallbackVerdict)
 
 
 def fenced_sample(
