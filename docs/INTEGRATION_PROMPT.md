@@ -22,32 +22,39 @@ Please do the following:
 2. Inspect this application and identify the smallest useful evaluation target.
    Prefer an existing test dataset or captured examples. Do not change production
    behavior merely to make the evaluation pass.
-3. Install LoopEval from the repository or from an existing local checkout.
-4. Create an evaluation directory in this application containing:
+3. Identify how to invoke the target application behavior. Create the smallest
+   adapter or fixture needed to call it and capture its output, context, and
+   trace. LoopEval evaluates the captured outcome; it does not invoke the
+   application automatically.
+4. Install LoopEval from the repository or from an existing local checkout.
+5. Create an evaluation directory in this application containing:
    - loopeval.yaml
    - a checks directory
    - a small sanitized JSONL dataset
    - a short README explaining how to run the suite
-5. Map application records into LoopEval's input, output, context, expected,
+6. Map application records into LoopEval's input, output, context, expected,
    trace, metadata, and data fields as appropriate. Preserve stable sample ids.
-6. Create a concise requirements.md describing the behavior these scenarios
-   should satisfy. Run `loopeval bootstrap` to propose a small initial check
-   library. Do not activate proposals automatically.
-7. Review the proposed checks with me. Prefer deterministic checks for facts
-   that code can calculate exactly. Keep semantic checks narrow and limited to
-   questions that require understanding language.
-8. Run the complete workflow offline first with mock providers:
+7. Create a concise requirements.md describing the behavior these scenarios
+   should satisfy.
+8. Run the captured scenarios offline first with mock providers:
    - loopeval doctor
    - loopeval run <dataset>
    Confirm that artifacts are written locally and that no credential is needed.
 9. Prepare the requested real-provider configuration, but reference API keys by
    environment-variable name only. Never write, print, request, or commit an
-   actual key. If the provider choice is unspecified, keep the offline setup and
-   document the OpenRouter option without enabling it.
-10. Add a project-native test or CI command that runs the evaluation suite only
+   actual key. If provider choices are unspecified, keep the offline setup and
+   document the available direct and OpenRouter paths without enabling one.
+10. If the selected LLM credential is already available in the environment, run
+    `loopeval bootstrap` to propose the initial check library. Leave every
+    proposal inactive. If credentials are unavailable, document the exact
+    bootstrap command instead of substituting a mock proposal.
+11. Review the proposed or planned checks for scope. Prefer deterministic checks
+    for facts that code can calculate exactly. Keep semantic checks narrow and
+    limited to questions that require understanding language.
+12. Add a project-native test or CI command that runs the evaluation suite only
    if doing so is deterministic and does not require a secret in pull requests.
-11. Run the application's existing tests plus the new evaluation smoke test.
-12. Summarize:
+13. Run the application's existing tests plus the new evaluation smoke test.
+14. Summarize:
     - files created or changed
     - how samples map into LoopEval
     - checks added and why

@@ -1,22 +1,58 @@
 # LoopEval
 
-LoopEval is a local-first evaluation framework for AI outputs and agent runs.
-It combines deterministic checks, the
+LoopEval is a local-first evaluation framework for AI applications and agents.
+It combines exact checks, the
 [Jev decision model](https://docs.typesafe.ai/introduction), and an optional
-large language model (LLM) fallback in one cost-aware evaluation pipeline.
+large language model (LLM) fallback in one learning evaluation pipeline.
 
-The core idea is simple: known failure modes should become reusable checks.
-LoopEval sends routine judgments to Jev, sends only unresolved cases to the LLM,
-and helps you turn repeated misses into reviewed, validated checks. As the check
-library improves, fewer cases need the more expensive fallback.
+You provide representative application scenarios and describe what good behavior
+means. LoopEval helps build the initial check library, sends routine semantic
+judgments to Jev, and sends only uncertain or uncovered cases to the LLM. When
+the LLM discovers a reusable failure category, it proposes a new check for human
+review and held-out validation. Once promoted, future cases can use the cheaper
+Jev path.
 
 LoopEval uses a bring your own key (BYOK) model. It runs in your environment,
-providers bill your accounts directly, and evaluation records stay in your local
-storage. Selected sample content is sent to the providers you configure.
+providers bill your accounts directly, and reports stay in local storage. Sample
+content is sent only to the providers you configure.
 
 > **Project status:** LoopEval v0.1 is intended for evaluation, regression
-> testing, and controlled CI workflows. Calibrate thresholds on labeled examples
-> before using model judgments for high-impact decisions.
+> testing, and controlled CI workflows. Validate model judgments against labeled
+> examples before using them for high-impact decisions.
+
+## Where LoopEval fits
+
+LoopEval evaluates outcomes produced by your application. Your application or
+test harness still runs the scenario. LoopEval receives the resulting input,
+output, context, and trace, then determines whether that outcome passes your
+evaluation policy.
+
+```mermaid
+flowchart LR
+    A["Test scenario"] --> B["Your app or agent"]
+    B --> C["Output, context, and trace"]
+    C --> D["LoopEval in your environment"]
+    D --> E["Exact local checks"]
+    E --> F["Jev using your key"]
+    F -->|"Resolved"| G["Result and report"]
+    F -->|"Uncertain or uncovered"| H["LLM using your key"]
+    H --> G
+    H --> I["Candidate reusable check"]
+    I --> J["Human review and validation"]
+    J --> F
+```
+
+Use LoopEval for:
+
+- response quality and task completion
+- retrieval-augmented generation (RAG) grounding and citation support
+- agent traces and tool-use behavior
+- policy and safety checks
+- structured output validation
+- local regression testing and CI
+
+LoopEval is an outcome evaluator, not an application runner. You decide how to
+invoke your app and which state should be captured for evaluation.
 
 ## Prerequisites
 
@@ -33,188 +69,159 @@ setup uses `TYPESAFE_API_KEY` for Jev and `OPENAI_API_KEY` for the fallback. A
 Jev-only configuration needs no LLM key, but it cannot run the complete learning
 loop. The offline tour requires no credentials.
 
-## What you can evaluate
-
-LoopEval accepts a small, general sample format that works for:
-
-- LLM response quality and task completion
-- RAG grounding and citation support
-- policy and safety checks
-- agent traces and tool-use behavior
-- structured output validation
-- regression suites in CI
-
-Each sample can include an input, output, retrieved context, expected output,
-agent trace, metadata, and application-specific data.
-
-## How it works
-
-```mermaid
-flowchart LR
-    A["Your eval cases"] --> B["LoopEval in your environment"]
-    B --> C["Local deterministic checks"]
-    C --> D["Jev decision model<br/>using your API key"]
-    D --> E{"Resolved with confidence?"}
-    E -->|"Yes"| F["Pass, fail, or unresolved<br/>with evidence"]
-    E -->|"No"| G["LLM fallback<br/>using your API key"]
-    G --> F
-    G --> H["Candidate reusable check"]
-    H --> I["Human review and<br/>held-out validation"]
-    I --> J["Active check library"]
-    J --> D
-    B --> K["Local SQLite and<br/>JSON reports"]
-```
-
-For each case:
-
-1. Local code handles exact checks such as JSON validity, required fields,
-   regular expressions, length limits, and exact matches.
-2. Applicable semantic checks are sent to Jev as typed Noul, Choice, or Score
-   questions in one request.
-3. LoopEval applies your thresholds to Jev's probabilities. Clear results stop
-   there.
-4. Uncertain, uncovered, audited, or provider-error cases can go to your chosen
-   LLM for a structured verdict.
-5. A novel recurring failure can become a candidate check. It must be reviewed
-   and validated on labeled holdout data before activation.
-
-LoopEval sends sample state and typed questions to the configured Jev provider.
-Only escalated sample state is sent to the configured LLM provider. API keys are
-read from environment variables and are not stored in reports or SQLite.
-
 ## Set it up with a coding agent
 
-If you use Codex, Claude Code, Cursor, or another coding agent, start with the
-[copy-paste integration prompt](docs/INTEGRATION_PROMPT.md). It guides the agent
-through installation, sample mapping, initial checks, offline verification, and
-provider setup without asking it to invent or store credentials.
+If you use Codex, Claude Code, Cursor, or another coding agent, copy the
+[integration prompt](docs/INTEGRATION_PROMPT.md) into your application repository.
+It guides the agent through finding an evaluation target, capturing scenarios,
+configuring providers, bootstrapping checks, and verifying the integration.
 
-## Five-minute local tour
+## Install and initialize
 
-Python 3.11 or newer is required.
+Until the first package release, install from the repository:
 
 ```bash
 git clone https://github.com/tbskin/loopeval.git
 cd loopeval
 python -m pip install -e .
-
-loopeval init demo --offline
-cd demo
-loopeval doctor
-loopeval run samples.jsonl
-loopeval candidates
 ```
 
-The offline project uses deterministic mock providers. It makes no network
-requests and requires no API key. One sample deliberately exercises candidate
-discovery so you can inspect the learning workflow.
-
-## Run with Jev and an LLM
-
-The default project template uses
-[TypeSafe](https://typesafe.ai/) directly for Jev and
-[OpenAI](https://developers.openai.com/api/) directly for the fallback LLM:
+Create an evaluation directory using direct TypeSafe and OpenAI credentials:
 
 ```bash
-loopeval init my-evals
-cd my-evals
+loopeval init evals --decision typesafe --fallback openai
+cd evals
+
 export TYPESAFE_API_KEY='your-typesafe-key'
 export OPENAI_API_KEY='your-openai-key'
+
 loopeval doctor
-loopeval run samples.jsonl
 ```
 
-The generated `loopeval.yaml` contains:
-
-```yaml
-providers:
-  decision:
-    type: typesafe
-    model: jev-1.13.0
-    api_key_env: TYPESAFE_API_KEY
-    input_cost_per_million: 0.042
-    output_cost_per_million: 0
-
-  fallback:
-    type: openai
-    model: gpt-4.1-mini
-    api_key_env: OPENAI_API_KEY
-```
-
-Provider prices can change. The price fields are configuration so historical
-reports can retain the assumptions used for cost calculations. When a provider
-returns an authoritative request cost, LoopEval records that value.
-
-Choose OpenRouter for both roles with one key:
+Or use one OpenRouter key for both roles:
 
 ```bash
-loopeval init my-evals --decision openrouter --fallback openrouter
+loopeval init evals --decision openrouter --fallback openrouter
+export OPENROUTER_API_KEY='your-openrouter-key'
 ```
 
-You can also disable the fallback, use an OpenAI-compatible endpoint, or inject
-a custom Python provider. See [provider configuration](docs/PROVIDERS.md).
+See [provider setup](docs/PROVIDERS.md) for Jev-only, compatible endpoint, local
+model, and custom Python configurations.
 
-## Add your evaluation cases
+## Capture one application scenario
 
-LoopEval reads JSON or JSONL:
+Call your application first, then pass the result to LoopEval:
+
+```python
+from loopeval import LoopEval
+from my_app import answer_question
+
+question = "What is the refund window?"
+app_result = answer_question(question)
+
+sample = {
+    "id": "refund-window",
+    "input": question,
+    "output": app_result.text,
+    "context": app_result.retrieved_documents,
+    "trace": app_result.tool_trace,
+    "expected": "The refund window is 30 days.",
+}
+
+with LoopEval.from_config("evals/loopeval.yaml") as evaluator:
+    report = evaluator.run([sample])
+
+result = report.results[0]
+print(result.verdict)
+print(result.checks)
+print(result.escalation_reasons)
+print(report.total_cost_usd)
+```
+
+Use `await evaluator.arun(samples)` inside an async application.
+
+For file-based or CI runs, capture one JSON object per line:
 
 ```json
-{
-  "id": "refund-001",
-  "input": "What is the refund window?",
-  "output": "Refunds are available for 60 days.",
-  "context": ["Refunds are available for 30 days."],
-  "metadata": {"split": "test"}
-}
+{"id":"refund-window","input":"What is the refund window?","output":"Refunds are available for 30 days.","context":["Refunds are available within 30 days."]}
 ```
 
-Only `input` is required. Common optional fields are:
+Then run:
+
+```bash
+loopeval run scenarios.jsonl
+```
+
+The [refund assistant example](examples/refund_assistant) contains a complete
+application, scenario-capture script, requirements file, checks, and provider
+configuration.
+
+## Build the initial check library
+
+Write a short requirements file describing what the application must do. Then
+ask the configured LLM to propose a focused initial library:
+
+```bash
+loopeval bootstrap \
+  --requirements requirements.md \
+  --scenarios scenarios.jsonl
+
+loopeval candidates --status proposed
+loopeval candidate cand_abc123
+```
+
+Bootstrap can propose exact checks from the built-in rule registry and semantic
+checks for Jev. Its output is treated as untrusted. Proposed checks remain
+inactive until a person reviews them and they pass labeled holdout validation.
+
+Users should not normally need to hand-author semantic check YAML. Manual checks
+remain available for exact application invariants and advanced customization.
+
+## How each evaluation runs
+
+For each sample:
+
+1. Local code runs exact checks such as JSON validity, required fields, regular
+   expressions, length limits, and exact matches.
+2. Applicable semantic checks are sent to Jev as typed
+   [Noul, Choice, or Score](https://docs.typesafe.ai/concepts/system-one)
+   questions in one request.
+3. LoopEval applies each check's thresholds to Jev's probabilities.
+4. Uncertain, uncovered, audited, or provider-error cases can go to the selected
+   LLM for a structured verdict.
+5. A genuinely new reusable failure becomes an inactive candidate check.
+6. Reviewed candidates are evaluated on labeled holdout data before promotion.
+
+The overall result is:
+
+- `pass`: no active check or fallback found a material failure
+- `fail`: at least one check or fallback found a material failure
+- `unresolved`: the available evidence or providers could not safely decide
+
+## Sample format
+
+Only `input` is required. Include enough state for the checks to judge the
+application outcome.
 
 | Field | Purpose |
 | --- | --- |
 | `id` | Stable identifier used for caching, audits, and reports |
-| `output` | Model or agent output to evaluate |
+| `input` | Scenario input or user request |
+| `output` | Application, model, or agent output |
 | `context` | Retrieved passages, policy text, or other evidence |
 | `expected` | Reference answer or expected structured value |
 | `trace` | Agent messages, tool calls, and tool results |
 | `metadata` | Dataset split, model name, experiment id, or tags |
 | `data` | Additional application-specific state |
 | `labels` | Human labels used for candidate validation |
-| `expected_verdict` | Optional expected overall result |
+| `expected_verdict` | Human-labeled expected overall result |
 
-## Build your first evaluation library
+## Advanced manual checks
 
-Describe the behavior your application must follow in a short Markdown file.
-Then let the configured LLM propose a focused initial check library from those
-requirements and representative scenarios:
+Checks are versioned YAML files that can be reviewed and committed with an
+evaluation suite.
 
-```bash
-loopeval bootstrap \
-  --requirements requirements.md \
-  --scenarios samples.jsonl
-
-loopeval candidates --status proposed
-loopeval candidate cand_abc123
-```
-
-Bootstrap proposals are untrusted candidates. They do not become active checks
-automatically. Review their scope, label a holdout dataset, validate them, and
-promote only the checks that meet your configured quality policy. This gives the
-LLM responsibility for discovering and expressing potential checks without
-letting it silently change evaluation policy.
-
-After the initial library is active, LoopEval continues the same process during
-normal runs. Jev handles known checks. Uncertain or uncovered scenarios go to
-the LLM, which can propose additional candidates. Reviewed candidates that pass
-held-out validation become active Jev checks, reducing future fallback use.
-
-## Customize checks by hand
-
-Checks are versioned YAML files that can be reviewed and committed with your
-evaluation suite. Manual authoring is useful for exact application invariants or
-when you need direct control over a check's boundary.
-
-Use deterministic checks when code can calculate the answer exactly:
+An exact check uses a built-in local rule:
 
 ```yaml
 id: output.valid_json
@@ -227,10 +234,10 @@ field: output
 severity: critical
 ```
 
-Built-in deterministic rules are `not_empty`, `exact_match`, `json_valid`,
-`regex`, `max_length`, and `required_fields`.
+Built-in exact rules are `not_empty`, `exact_match`, `json_valid`, `regex`,
+`max_length`, and `required_fields`.
 
-Use a semantic check when the answer requires understanding language:
+A semantic check describes one narrow failure for Jev:
 
 ```yaml
 id: grounding.unsupported_claim
@@ -243,54 +250,17 @@ instructions: >-
   Does `output` make a material factual claim that is contradicted by, or
   absent from, `context`?
 criteria:
-  true: At least one material factual claim lacks support or conflicts with context.
-  false: Every material factual claim is supported by context.
+  "true": At least one material factual claim lacks support or conflicts with context.
+  "false": Every material factual claim is supported by context.
 pass_threshold: 0.15
 failure_threshold: 0.80
 severity: critical
 ```
 
-Noul checks represent the probability that a proposition is true. Choice checks
-select from named criteria. Score checks use an ordered scale. Each check owns
-its pass, fail, and uncertainty policy.
+## Grow the library over time
 
-## Use the result in Python
-
-```python
-from loopeval import LoopEval
-
-with LoopEval.from_config("loopeval.yaml") as evaluator:
-    report = evaluator.run(
-        [
-            {
-                "id": "example-1",
-                "input": "Summarize the supplied policy.",
-                "output": "The customer has 60 days to request a refund.",
-                "context": ["Refund requests are accepted within 30 days."],
-            }
-        ]
-    )
-
-result = report.results[0]
-print(result.verdict)
-print(result.checks)
-print(result.escalation_reasons)
-print(report.total_cost_usd)
-```
-
-Use `await evaluator.arun(samples)` inside an async application.
-
-An overall result is one of:
-
-- `pass`: no active check or fallback found a material failure
-- `fail`: at least one check or fallback found a material failure
-- `unresolved`: the configured evidence or providers could not produce a safe
-  pass or fail decision
-
-## Grow the check library
-
-A normal run stores novel candidate checks automatically. Activation is a
-separate, guarded workflow:
+Normal evaluation runs store novel candidates automatically. Promotion remains
+a separate guarded workflow:
 
 ```bash
 loopeval candidates --status proposed
@@ -313,15 +283,12 @@ The default promotion policy requires:
 - recorded human approval
 
 Promotion writes a regular active YAML check under `checks/learned/`. The next
-run loads it with the rest of the check library. Use `loopeval compare` on a
-fixed dataset to verify the effect on accuracy, escalation rate, and cost.
+run sends it to Jev with the rest of the active library. See the
+[learning and promotion guide](docs/LEARNING_LOOP.md) for the full workflow.
 
-See [the learning and promotion guide](docs/LEARNING_LOOP.md) for labeling and
-review guidance.
+## Storage, privacy, and cost
 
-## Storage, privacy, and cost control
-
-LoopEval stores state under `.loopeval/` by default:
+LoopEval stores local state under `.loopeval/` by default:
 
 ```text
 .loopeval/
@@ -332,38 +299,53 @@ LoopEval stores state under `.loopeval/` by default:
 ```
 
 - There is no telemetry.
-- Provider credentials are read from named environment variables.
-- Evaluation records, evidence, cache entries, and candidates are stored locally.
-- Network requests go only to the providers selected in `loopeval.yaml`.
-- Provider choice is explicit. LoopEval does not silently switch providers.
-- Per-sample timeouts, concurrency, state-size limits, fallback limits, and run
-  cost budgets are configurable.
-- Cache keys include provider identity, model, configuration, state, and questions.
+- Credentials are read from environment variables and are not persisted.
+- Reports, cache entries, evidence, and candidate records stay local.
+- Sample state sent for semantic checks goes to the selected Jev provider.
+- Only escalated sample state goes to the selected LLM provider.
+- Provider selection is explicit. LoopEval does not silently switch providers.
+- Timeouts, concurrency, state-size limits, fallback limits, and cost budgets are
+  configurable.
 
-Evaluated content is untrusted data. LoopEval bounds and fences content sent to
-the fallback, requests structured output where supported, and validates provider
-responses locally. Prompt injection cannot be eliminated through prompting
-alone. Review the [security model](SECURITY.md) before evaluating sensitive data
-or using results in high-impact workflows.
+Evaluated content is untrusted data. LoopEval bounds and fences fallback input,
+requests structured output where supported, and validates provider responses
+locally. Prompt injection cannot be eliminated through prompting alone. Review
+the [security model](SECURITY.md) before evaluating sensitive data or using
+results in high-impact workflows.
+
+## Offline tour
+
+The offline project uses deterministic mock providers. It makes no network
+requests and requires no key:
+
+```bash
+loopeval init demo --offline
+cd demo
+loopeval doctor
+loopeval run samples.jsonl
+loopeval candidates
+```
+
+Mocks demonstrate control flow only. They are not quality measurements.
 
 ## Command reference
 
 | Command | Purpose |
 | --- | --- |
-| `loopeval init` | Create configuration, starter checks, and sample data |
-| `loopeval doctor` | Validate configuration, checks, directories, and key references |
-| `loopeval bootstrap` | Propose initial checks from requirements and representative scenarios |
-| `loopeval run` | Run the complete evaluation pipeline |
+| `loopeval init` | Create provider configuration, starter checks, and sample data |
+| `loopeval doctor` | Validate configuration, checks, directories, and credentials |
+| `loopeval bootstrap` | Propose initial checks from requirements and scenarios |
+| `loopeval run` | Run the exact, Jev, and optional LLM cascade |
 | `loopeval report` | Read a stored run report |
-| `loopeval compare` | Compare verdicts, escalation rate, and cost across two runs |
-| `loopeval candidates` | List learned check candidates |
-| `loopeval candidate` | Inspect one candidate, its evidence, and validation metrics |
+| `loopeval compare` | Compare verdicts, escalation rate, and cost across runs |
+| `loopeval candidates` | List candidate checks |
+| `loopeval candidate` | Inspect a candidate and its evidence |
 | `loopeval review` | Approve or reject a candidate |
 | `loopeval validate` | Evaluate an approved candidate on labeled holdout data |
-| `loopeval promote` | Add a validated candidate to the active check library |
+| `loopeval promote` | Add a validated candidate to the active library |
 | `loopeval learn` | Rebuild candidate observations from a stored run |
 
-Run `loopeval COMMAND --help` for complete arguments and options.
+Run `loopeval COMMAND --help` for all arguments and options.
 
 ## License
 
@@ -376,11 +358,8 @@ grant from contributors and provides the software without warranties or
 conditions.
 
 The LoopEval license covers this repository's code and documentation. Jev,
-OpenRouter, OpenAI, and other external services have their own terms, licenses,
-privacy policies, and usage charges. Bringing a provider key does not transfer
-those services under the Apache license.
-
-Contributions submitted to this repository are accepted under Apache 2.0.
+TypeSafe, OpenRouter, OpenAI, and other external services have their own terms,
+privacy policies, and usage charges.
 
 ## More documentation
 
@@ -390,5 +369,4 @@ Contributions submitted to this repository are accepted under Apache 2.0.
 - [Security policy and threat model](SECURITY.md)
 
 If you want to contribute, start with [CONTRIBUTING.md](CONTRIBUTING.md). Coding
-agents working on LoopEval itself should read [AGENTS.md](AGENTS.md) before
-changing the package.
+agents working on LoopEval itself should read [AGENTS.md](AGENTS.md) first.

@@ -1,0 +1,25 @@
+checks:
+  - id: output.not_empty
+    version: 1.0.0
+    name: Output is present
+    description: The application returned a non-empty answer.
+    kind: deterministic
+    rule: not_empty
+    field: output
+    severity: critical
+
+  - id: grounding.unsupported_claim
+    version: 1.0.0
+    name: Unsupported policy claim
+    description: A material policy claim is unsupported by the supplied context.
+    kind: noul
+    requires: [context]
+    instructions: >-
+      Does `output` contain a material policy claim that is contradicted by, or
+      absent from, `context`?
+    criteria:
+      "true": At least one material policy claim lacks support or conflicts with context.
+      "false": Every material policy claim is supported by context.
+    pass_threshold: 0.15
+    failure_threshold: 0.80
+    severity: critical
