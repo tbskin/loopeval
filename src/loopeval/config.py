@@ -35,11 +35,13 @@ class ProviderConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_provider(self) -> ProviderConfig:
-        if self.type not in {"disabled", "mock"}:
+        if self.type not in {"disabled", "mock", "openai_compatible"}:
             if not self.model:
                 raise ValueError(f"{self.type} requires model")
             if not self.api_key_env:
                 raise ValueError(f"{self.type} requires api_key_env")
+        if self.type == "openai_compatible" and not self.model:
+            raise ValueError("openai_compatible requires model")
         if self.type == "openai_compatible" and not self.base_url:
             raise ValueError("openai_compatible requires base_url")
         return self

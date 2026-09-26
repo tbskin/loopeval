@@ -77,6 +77,19 @@ def test_provider_configuration_is_complete() -> None:
                 }
             }
         )
+    local = LoopEvalConfig.model_validate(
+        {
+            "providers": {
+                "decision": {"type": "mock"},
+                "fallback": {
+                    "type": "openai_compatible",
+                    "model": "local-model",
+                    "base_url": "http://localhost:11434/v1",
+                },
+            }
+        }
+    )
+    assert local.providers.fallback.api_key_env is None
 
 
 def test_load_json_and_jsonl(tmp_path: Path) -> None:

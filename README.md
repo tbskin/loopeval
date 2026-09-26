@@ -1,20 +1,37 @@
 # LoopEval
 
 LoopEval is a local-first evaluation framework for AI outputs and agent runs.
-It combines deterministic checks, the Jev decision model, and an optional LLM
-fallback in one cost-aware evaluation pipeline.
+It combines deterministic checks, the
+[Jev decision model](https://docs.typesafe.ai/introduction), and an optional
+large language model (LLM) fallback in one cost-aware evaluation pipeline.
 
 The core idea is simple: known failure modes should become reusable checks.
 LoopEval sends routine judgments to Jev, sends only unresolved cases to the LLM,
 and helps you turn repeated misses into reviewed, validated checks. As the check
 library improves, fewer cases need the more expensive fallback.
 
-LoopEval runs in your environment. You bring the provider keys, providers bill
-your accounts directly, and evaluation records stay in your local storage.
+LoopEval uses a bring your own key (BYOK) model. It runs in your environment,
+providers bill your accounts directly, and evaluation records stay in your local
+storage. Selected sample content is sent to the providers you configure.
 
 > **Project status:** LoopEval v0.1 is intended for evaluation, regression
 > testing, and controlled CI workflows. Calibrate thresholds on labeled examples
 > before using model judgments for high-impact decisions.
+
+## Prerequisites
+
+- Python 3.11 or newer
+- representative scenarios or captured outputs from your application
+- Jev access through either a
+  [TypeSafe API key](https://console.typesafe.ai/) or an
+  [OpenRouter API key](https://openrouter.ai/settings/keys)
+- an LLM API key if you want unresolved cases categorized and candidate checks
+  proposed
+
+An OpenRouter key can provide both Jev and the fallback LLM. The default direct
+setup uses `TYPESAFE_API_KEY` for Jev and `OPENAI_API_KEY` for the fallback. A
+Jev-only configuration needs no LLM key, but it cannot run the complete learning
+loop. The offline tour requires no credentials.
 
 ## What you can evaluate
 
@@ -94,12 +111,15 @@ discovery so you can inspect the learning workflow.
 
 ## Run with Jev and an LLM
 
-The default project template uses OpenRouter for both Jev and the fallback LLM:
+The default project template uses
+[TypeSafe](https://typesafe.ai/) directly for Jev and
+[OpenAI](https://developers.openai.com/api/) directly for the fallback LLM:
 
 ```bash
 loopeval init my-evals
 cd my-evals
-export OPENROUTER_API_KEY='your-key'
+export TYPESAFE_API_KEY='your-typesafe-key'
+export OPENAI_API_KEY='your-openai-key'
 loopeval doctor
 loopeval run samples.jsonl
 ```
@@ -109,25 +129,30 @@ The generated `loopeval.yaml` contains:
 ```yaml
 providers:
   decision:
-    type: openrouter_decisions
-    model: typesafe/jev-1.13
-    api_key_env: OPENROUTER_API_KEY
+    type: typesafe
+    model: jev-1.13.0
+    api_key_env: TYPESAFE_API_KEY
     input_cost_per_million: 0.042
     output_cost_per_million: 0
 
   fallback:
-    type: openrouter
-    model: openai/gpt-4.1-mini
-    api_key_env: OPENROUTER_API_KEY
+    type: openai
+    model: gpt-4.1-mini
+    api_key_env: OPENAI_API_KEY
 ```
 
 Provider prices can change. The price fields are configuration so historical
 reports can retain the assumptions used for cost calculations. When a provider
 returns an authoritative request cost, LoopEval records that value.
 
-You can also use TypeSafe directly for Jev, OpenAI for the fallback, any
-OpenAI-compatible fallback endpoint, or custom Python provider implementations.
-See [provider configuration](docs/PROVIDERS.md).
+Choose OpenRouter for both roles with one key:
+
+```bash
+loopeval init my-evals --decision openrouter --fallback openrouter
+```
+
+You can also disable the fallback, use an OpenAI-compatible endpoint, or inject
+a custom Python provider. See [provider configuration](docs/PROVIDERS.md).
 
 ## Add your evaluation cases
 

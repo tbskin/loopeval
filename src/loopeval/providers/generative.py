@@ -18,7 +18,7 @@ class OpenAICompatibleProvider(GenerativeProvider):
         self.model = config.model
         self.name = config.type
         self.api_key = config.api_key
-        if not self.api_key:
+        if not self.api_key and config.type != "openai_compatible":
             raise MissingCredentialError(
                 f"{config.type} requires environment variable {config.api_key_env!r}"
             )
@@ -94,11 +94,9 @@ class OpenAICompatibleProvider(GenerativeProvider):
             body["messages"][0]["content"] += (
                 "\nReturn only JSON matching this schema:\n" + json.dumps(schema)
             )
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            **self.config.headers,
-        }
+        headers = {"Content-Type": "application/json", **self.config.headers}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         if self.config.type == "openrouter":
             headers["X-Title"] = "LoopEval"
 

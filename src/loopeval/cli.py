@@ -34,22 +34,7 @@ CONFIG_TEMPLATE = {
     "version": 1,
     "project": "my-loopeval-project",
     "checks": ["checks"],
-    "providers": {
-        "decision": {
-            "type": "openrouter_decisions",
-            "model": "typesafe/jev-1.13",
-            "api_key_env": "OPENROUTER_API_KEY",
-            "timeout_seconds": 20,
-            "input_cost_per_million": 0.042,
-            "output_cost_per_million": 0,
-        },
-        "fallback": {
-            "type": "openrouter",
-            "model": "openai/gpt-4.1-mini",
-            "api_key_env": "OPENROUTER_API_KEY",
-            "timeout_seconds": 45,
-        },
-    },
+    "providers": {},
     "escalation": {
         "on_uncertain": True,
         "on_decision_error": True,
@@ -77,9 +62,42 @@ CONFIG_TEMPLATE = {
 }
 
 
-OFFLINE_PROVIDERS = {
-    "decision": {"type": "mock", "model": "mock-decision"},
-    "fallback": {"type": "mock", "model": "mock-generative"},
+DECISION_PRESETS: dict[str, dict[str, object]] = {
+    "typesafe": {
+        "type": "typesafe",
+        "model": "jev-1.13.0",
+        "api_key_env": "TYPESAFE_API_KEY",
+        "timeout_seconds": 20,
+        "input_cost_per_million": 0.042,
+        "output_cost_per_million": 0,
+    },
+    "openrouter": {
+        "type": "openrouter_decisions",
+        "model": "typesafe/jev-1.13",
+        "api_key_env": "OPENROUTER_API_KEY",
+        "timeout_seconds": 20,
+        "input_cost_per_million": 0.042,
+        "output_cost_per_million": 0,
+    },
+    "mock": {"type": "mock", "model": "mock-decision"},
+}
+
+
+FALLBACK_PRESETS: dict[str, dict[str, object]] = {
+    "openai": {
+        "type": "openai",
+        "model": "gpt-4.1-mini",
+        "api_key_env": "OPENAI_API_KEY",
+        "timeout_seconds": 45,
+    },
+    "openrouter": {
+        "type": "openrouter",
+        "model": "openai/gpt-4.1-mini",
+        "api_key_env": "OPENROUTER_API_KEY",
+        "timeout_seconds": 45,
+    },
+    "none": {"type": "disabled"},
+    "mock": {"type": "mock", "model": "mock-generative"},
 }
 
 
@@ -152,12 +170,74 @@ def _store(config: LoopEvalConfig) -> LocalStore:
     return LocalStore(config.storage.directory, config.storage.database)
 
 
+def _provider_configuration(
+    *,
+    decision: str,
+    fallback: str,
+    decision_model: str | None,
+    fallback_model: str | None,
+    decision_key_env: str | None,
+    fallback_key_env: str | None,
+    fallback_base_url: str | None,
+) -> dict[str, object]:
+    if decision not in DECISION_PRESETS:
+        choices = ", ".join(DECISION_PRESETS)
+        raise typer.BadParameter(f"--decision must be one of: {choices}")
+    if fallback not in {*FALLBACK_PRESETS, "openai-compatible"}:
+        choices = ", ".join([*FALLBACK_PRESETS, "openai-compatible"])
+        raise typer.BadParameter(f"--fallback must be one of: {choices}")
+
+    decision_config = json.loads(json.dumps(DECISION_PRESETS[decision]))
+    if decision_model:
+        decision_config["model"] = decision_model
+    if decision_key_env:
+        decision_config["api_key_env"] = decision_key_env
+
+    if fallback == "openai-compatible":
+        if not fallback_model or not fallback_base_url:
+            raise typer.BadParameter(
+                "--fallback openai-compatible requires --fallback-model and --fallback-base-url"
+            )
+        fallback_config: dict[str, object] = {
+            "type": "openai_compatible",
+            "model": fallback_model,
+            "base_url": fallback_base_url,
+            "api_key_env": fallback_key_env,
+            "timeout_seconds": 45,
+            "structured_output": False,
+        }
+    else:
+        fallback_config = json.loads(json.dumps(FALLBACK_PRESETS[fallback]))
+        if fallback_model and fallback not in {"none", "mock"}:
+            fallback_config["model"] = fallback_model
+        if fallback_key_env and fallback not in {"none", "mock"}:
+            fallback_config["api_key_env"] = fallback_key_env
+
+    return {"decision": decision_config, "fallback": fallback_config}
+
+
 @app.command()
 def init(
     path: Annotated[Path, typer.Argument(help="Project directory to initialize")] = Path("."),
     offline: Annotated[
         bool, typer.Option("--offline", help="Use deterministic mock providers; no API key needed.")
     ] = False,
+    decision: Annotated[
+        str,
+        typer.Option("--decision", help="Jev route: typesafe or openrouter."),
+    ] = "typesafe",
+    fallback: Annotated[
+        str,
+        typer.Option(
+            "--fallback",
+            help="Fallback route: openai, openrouter, openai-compatible, or none.",
+        ),
+    ] = "openai",
+    decision_model: Annotated[str | None, typer.Option("--decision-model")] = None,
+    fallback_model: Annotated[str | None, typer.Option("--fallback-model")] = None,
+    decision_key_env: Annotated[str | None, typer.Option("--decision-key-env")] = None,
+    fallback_key_env: Annotated[str | None, typer.Option("--fallback-key-env")] = None,
+    fallback_base_url: Annotated[str | None, typer.Option("--fallback-base-url")] = None,
     force: Annotated[bool, typer.Option("--force", help="Overwrite scaffold files.")] = False,
 ) -> None:
     """Create a LoopEval project with checks and a runnable sample dataset."""
@@ -172,13 +252,35 @@ def init(
         )
     config = json.loads(json.dumps(CONFIG_TEMPLATE))
     if offline:
-        config["providers"] = OFFLINE_PROVIDERS
+        config["providers"] = {
+            "decision": DECISION_PRESETS["mock"],
+            "fallback": FALLBACK_PRESETS["mock"],
+        }
         config["escalation"]["random_audit_rate"] = 0
+    else:
+        config["providers"] = _provider_configuration(
+            decision=decision,
+            fallback=fallback,
+            decision_model=decision_model,
+            fallback_model=fallback_model,
+            decision_key_env=decision_key_env,
+            fallback_key_env=fallback_key_env,
+            fallback_base_url=fallback_base_url,
+        )
     check_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(yaml.safe_dump(config, sort_keys=False))
     check_path.write_text(yaml.safe_dump(CHECKS_TEMPLATE, sort_keys=False))
     sample_path.write_text("".join(json.dumps(sample) + "\n" for sample in SAMPLES_TEMPLATE))
     typer.echo(f"Initialized LoopEval in {path.resolve()}")
+    if not offline:
+        decision_provider = config["providers"]["decision"]
+        fallback_provider = config["providers"]["fallback"]
+        typer.echo(f"Jev: {decision_provider['type']} ({decision_provider['api_key_env']})")
+        if fallback_provider["type"] == "disabled":
+            typer.echo("LLM fallback: disabled")
+        else:
+            key_env = fallback_provider.get("api_key_env") or "no credential"
+            typer.echo(f"LLM fallback: {fallback_provider['type']} ({key_env})")
     typer.echo(f"Next: cd {path} && loopeval doctor && loopeval run samples.jsonl")
 
 
@@ -193,22 +295,31 @@ def doctor(
     checks = load_checks(config.checks)
     typer.echo(f"Config: OK ({config.project}, schema v{config.version})")
     typer.echo(f"Checks: OK ({len(checks)} enabled)")
+    missing: list[str] = []
     for role, provider in (
         ("decision", config.providers.decision),
         ("fallback", config.providers.fallback),
     ):
         if provider.type in {"disabled", "mock"}:
             typer.echo(f"{role.title()} provider: {provider.type}")
+        elif provider.type == "openai_compatible" and not provider.api_key_env:
+            typer.echo(
+                f"{role.title()} provider: {provider.type}/{provider.model} (unauthenticated)"
+            )
         elif provider.api_key_env and os.environ.get(provider.api_key_env):
             typer.echo(
                 f"{role.title()} provider: {provider.type}/{provider.model} (credential present)"
             )
         else:
+            missing.append(provider.api_key_env or f"{role} credential")
             typer.echo(
                 f"{role.title()} provider: {provider.type}/{provider.model} "
                 f"(missing {provider.api_key_env})"
             )
     typer.echo(f"Storage: {config.storage.directory}")
+    if missing:
+        typer.echo("Missing required credentials: " + ", ".join(missing), err=True)
+        raise typer.Exit(code=2)
 
 
 @app.command("run")

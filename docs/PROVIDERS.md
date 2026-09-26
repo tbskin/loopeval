@@ -4,7 +4,42 @@ LoopEval distinguishes decision providers from generative fallback providers.
 Both use small, explicit contracts so provider integrations remain easy to
 implement and test.
 
+## Choose a provider path
+
+| Jev route | LLM fallback | Keys |
+| --- | --- | --- |
+| [TypeSafe direct](https://docs.typesafe.ai/introduction/quickstart) | [OpenAI direct](https://developers.openai.com/api/) | `TYPESAFE_API_KEY`, `OPENAI_API_KEY` |
+| TypeSafe direct | [OpenRouter](https://openrouter.ai/docs/quickstart) | `TYPESAFE_API_KEY`, `OPENROUTER_API_KEY` |
+| [OpenRouter Decisions](https://openrouter.ai/typesafe/jev-1.13/api) | OpenRouter | `OPENROUTER_API_KEY` |
+| TypeSafe direct | Disabled | `TYPESAFE_API_KEY` |
+| Mock | Mock | None |
+
+Generate the direct TypeSafe and OpenAI configuration:
+
+```bash
+loopeval init evals --decision typesafe --fallback openai
+```
+
+Use one OpenRouter key for both roles:
+
+```bash
+loopeval init evals --decision openrouter --fallback openrouter
+```
+
+Use Jev without the generative learning loop:
+
+```bash
+loopeval init evals --decision typesafe --fallback none
+```
+
+Provider keys are read from the environment variables named in
+`loopeval.yaml`. LoopEval does not read or persist the key itself.
+
 ## TypeSafe Jev
+
+Create a key in the [TypeSafe dashboard](https://console.typesafe.ai/). The
+[TypeSafe model reference](https://docs.typesafe.ai/models) lists current model
+names, pricing, and limits.
 
 ```yaml
 providers:
@@ -21,6 +56,8 @@ providers:
 Endpoint: `POST https://api.typesafe.ai/v1/systemone`.
 
 ## Jev through OpenRouter Decisions
+
+Create a key in [OpenRouter settings](https://openrouter.ai/settings/keys).
 
 ```yaml
 providers:
@@ -49,6 +86,8 @@ providers:
 
 ## OpenAI fallback
 
+Create a key in the [OpenAI dashboard](https://platform.openai.com/api-keys).
+
 ```yaml
 providers:
   fallback:
@@ -58,6 +97,16 @@ providers:
 ```
 
 ## Any OpenAI-compatible endpoint
+
+Generate a compatible configuration with:
+
+```bash
+loopeval init evals \
+  --fallback openai-compatible \
+  --fallback-model my-model \
+  --fallback-base-url https://inference.example.com/v1 \
+  --fallback-key-env MY_MODEL_API_KEY
+```
 
 ```yaml
 providers:
@@ -72,6 +121,9 @@ providers:
 Set `structured_output: false` when the endpoint does not implement
 `response_format.json_schema`; LoopEval then includes the schema in the system
 message and still validates the returned JSON locally.
+
+For a local endpoint that does not require authentication, omit
+`api_key_env`. LoopEval will not send an `Authorization` header.
 
 ## Custom providers
 

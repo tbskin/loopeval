@@ -154,6 +154,29 @@ async def test_generative_provider_parses_json(monkeypatch: pytest.MonkeyPatch) 
     assert FakeAsyncClient.requests[0][0] == "https://local.test/v1/chat/completions"
 
 
+@pytest.mark.asyncio
+async def test_openai_compatible_provider_allows_unauthenticated_local_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+    FakeAsyncClient.responses = [
+        response(200, {"choices": [{"message": {"content": '{"ok":true}'}}]})
+    ]
+    provider = OpenAICompatibleProvider(
+        ProviderConfig(
+            type="openai_compatible",
+            model="local-model",
+            base_url="http://localhost:11434/v1",
+            structured_output=False,
+        )
+    )
+    parsed, _, _ = await provider.generate_structured(
+        system="system", user="user", schema={"type": "object"}, schema_name="answer"
+    )
+    assert parsed == {"ok": True}
+    assert "Authorization" not in FakeAsyncClient.requests[0][1]
+
+
 def test_generative_parse_rejects_bad_content() -> None:
     with pytest.raises(ProviderError, match="non-text"):
         OpenAICompatibleProvider._parse([])

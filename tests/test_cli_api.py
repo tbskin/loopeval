@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import yaml
 from typer.testing import CliRunner
 
 from loopeval import LoopEval
@@ -139,6 +140,60 @@ def test_init_refuses_overwrite_and_version(tmp_path: Path) -> None:
     version = runner.invoke(app, ["version"])
     assert version.exit_code == 0
     assert version.output.strip() == "0.1.0"
+
+
+def test_init_selects_direct_and_openrouter_provider_paths(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    direct = tmp_path / "direct"
+    initialized = runner.invoke(app, ["init", str(direct)])
+    assert initialized.exit_code == 0, initialized.output
+    direct_config = yaml.safe_load((direct / "loopeval.yaml").read_text())
+    assert direct_config["providers"]["decision"]["type"] == "typesafe"
+    assert direct_config["providers"]["decision"]["api_key_env"] == "TYPESAFE_API_KEY"
+    assert direct_config["providers"]["fallback"]["type"] == "openai"
+    assert direct_config["providers"]["fallback"]["api_key_env"] == "OPENAI_API_KEY"
+
+    doctor = runner.invoke(app, ["doctor", "-c", str(direct / "loopeval.yaml")])
+    assert doctor.exit_code == 2
+    assert "Missing required credentials" in doctor.output
+
+    routed = tmp_path / "routed"
+    initialized = runner.invoke(
+        app,
+        ["init", str(routed), "--decision", "openrouter", "--fallback", "none"],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    routed_config = yaml.safe_load((routed / "loopeval.yaml").read_text())
+    assert routed_config["providers"]["decision"]["type"] == "openrouter_decisions"
+    assert routed_config["providers"]["fallback"]["type"] == "disabled"
+
+
+def test_init_openai_compatible_and_invalid_provider(tmp_path: Path) -> None:
+    compatible = tmp_path / "compatible"
+    initialized = runner.invoke(
+        app,
+        [
+            "init",
+            str(compatible),
+            "--fallback",
+            "openai-compatible",
+            "--fallback-model",
+            "local-model",
+            "--fallback-base-url",
+            "http://localhost:11434/v1",
+        ],
+    )
+    assert initialized.exit_code == 0, initialized.output
+    config = yaml.safe_load((compatible / "loopeval.yaml").read_text())
+    assert config["providers"]["fallback"]["type"] == "openai_compatible"
+    assert config["providers"]["fallback"]["api_key_env"] is None
+
+    invalid = runner.invoke(app, ["init", str(tmp_path / "bad"), "--decision", "unknown"])
+    assert invalid.exit_code != 0
+    assert "--decision must be one of" in invalid.output
 
 
 def test_python_api_and_active_loop_error(tmp_path: Path) -> None:
