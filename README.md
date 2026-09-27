@@ -80,7 +80,13 @@ configuring providers, bootstrapping checks, and verifying the integration.
 
 ## Install and initialize
 
-Until the first package release, install from the repository:
+After the first PyPI release, install the latest published version:
+
+```bash
+python -m pip install loopeval
+```
+
+Until then, or to use unreleased changes, install from the repository:
 
 ```bash
 git clone https://github.com/tbskin/loopeval.git

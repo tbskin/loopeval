@@ -20,7 +20,7 @@ uv sync --extra dev
 uv run ruff check .
 uv run mypy src/loopeval
 uv run pytest --cov=loopeval --cov-report=term-missing
-uv build
+./scripts/verify-package.sh dist
 ```
 
 ## Invariants

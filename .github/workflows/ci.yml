@@ -23,4 +23,4 @@ jobs:
       - run: uv run ruff check .
       - run: uv run mypy src/loopeval
       - run: uv run pytest --cov=loopeval --cov-report=term-missing
-      - run: uv build
+      - run: ./scripts/verify-package.sh dist

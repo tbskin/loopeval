@@ -16,7 +16,7 @@ uv sync --extra dev
 uv run ruff check .
 uv run mypy src/loopeval
 uv run pytest --cov=loopeval --cov-report=term-missing
-uv build
+./scripts/verify-package.sh dist
 ```
 
 Live provider tests must be opt-in and must never run on pull requests from
@@ -31,3 +31,6 @@ forks. Unit tests should use `httpx.MockTransport` or LoopEval's mock providers.
 - keep checks atomic and attach evidence to deterministic failures.
 
 Contributions are licensed under Apache-2.0.
+
+Maintainers should follow [the release guide](docs/RELEASING.md). Pull requests
+must not add PyPI tokens or broaden release-workflow permissions.

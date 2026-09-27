@@ -14,5 +14,6 @@ to providers, caching, or cost accounting.
 - [ ] `uv run ruff check .` passes.
 - [ ] `uv run mypy src/loopeval` passes.
 - [ ] `uv run pytest --cov=loopeval --cov-report=term-missing` passes.
+- [ ] `./scripts/verify-package.sh dist` passes when packaging changed.
 - [ ] Documentation and schemas changed together.
 - [ ] No credentials, private samples, or `.loopeval/` artifacts are included.

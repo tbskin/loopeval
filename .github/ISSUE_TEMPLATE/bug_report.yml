@@ -24,9 +24,11 @@ body:
         - TypeSafe direct
         - OpenRouter Decisions
         - OpenRouter fallback
-        - OpenAI fallback
+        - OpenAI Chat fallback
+        - OpenAI Responses fallback
+        - Anthropic fallback
         - OpenAI-compatible fallback
-        - Custom provider
+        - Provider plugin or custom provider
     validations:
       required: true
   - type: textarea
