@@ -43,7 +43,7 @@ def test_candidate_dedup_review_and_errors(tmp_path: Path) -> None:
         "kind": "noul",
         "instructions": "Is X present?",
     }
-    for sample_id in ("one", "two", "two"):
+    for sample_id in ("one", "two"):
         store.upsert_candidate(
             candidate_id="cand_x",
             check_id="learned.x",
@@ -54,9 +54,22 @@ def test_candidate_dedup_review_and_errors(tmp_path: Path) -> None:
             evidence=f"evidence for {sample_id}",
             confidence=0.9,
         )
+    changed_item = {**item, "name": "Mutated", "instructions": "A different question?"}
+    store.upsert_candidate(
+        candidate_id="cand_x",
+        check_id="learned.x",
+        title="Mutated",
+        description="Changed after observation",
+        check_json=changed_item,
+        sample_id="two",
+        evidence="different wording for the same candidate id",
+        confidence=0.8,
+    )
     row = store.get_candidate("cand_x")
     assert row and row["evidence_count"] == 2
     assert row["sample_ids"] == ["one", "two"]
+    assert row["title"] == "X"
+    assert row["check"] == item
     assert len(store.list_candidate_evidence("cand_x")) == 2
     assert len(store.list_candidates("proposed")) == 1
     with pytest.raises(ValueError, match="approve or reject"):

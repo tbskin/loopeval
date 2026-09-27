@@ -10,6 +10,7 @@ All notable changes follow Keep a Changelog and Semantic Versioning.
 - live provider verification through `loopeval doctor --live`;
 - installable decision and generative provider entry points;
 - verified wheel builds and a trusted-publishing release workflow;
+- immutable candidate definitions with accumulating evidence;
 - HTTP 529 retry handling and bounded `Retry-After` support.
 
 ## [0.1.0] - 2026-09-26

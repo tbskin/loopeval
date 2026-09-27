@@ -62,6 +62,8 @@ written as JSON and JSONL so results remain portable if the storage engine chang
 12. Model aliases should not be used for calibrated production thresholds.
 13. Audit sampling is deterministic by sample id.
 14. Secrets are read only from environment-variable references.
+15. Repeated observations can add candidate evidence but cannot rewrite the
+    candidate definition that a person reviewed or validated.
 
 ## Verdict aggregation
 

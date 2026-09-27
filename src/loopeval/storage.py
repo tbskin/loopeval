@@ -226,17 +226,13 @@ class LocalStore:
                 self._connection.execute(
                     """
                     UPDATE candidates
-                       SET evidence_count=?, sample_ids_json=?, updated_at=?, check_json=?,
-                           title=?, description=?
+                       SET evidence_count=?, sample_ids_json=?, updated_at=?
                      WHERE id=?
                     """,
                     (
                         len(samples),
                         json.dumps(sorted(samples)),
                         now,
-                        json.dumps(check_json),
-                        title,
-                        description,
                         candidate_id,
                     ),
                 )
