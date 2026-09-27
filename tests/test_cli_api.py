@@ -103,13 +103,12 @@ def test_offline_cli_end_to_end(tmp_path: Path) -> None:
         [
             "promote",
             candidate_id,
-            "--destination",
-            str(project / "checks" / "learned"),
             "-c",
             str(project / "loopeval.yaml"),
         ],
     )
     assert promoted.exit_code == 0, promoted.output
+    assert (project / "checks" / "learned" / "learned.novel_pattern.yaml").exists()
 
     after = runner.invoke(
         app,
@@ -166,6 +165,7 @@ def test_run_ci_gate_junit_and_detailed_report(tmp_path: Path) -> None:
     project = tmp_path / "demo"
     assert runner.invoke(app, ["init", str(project), "--offline"]).exit_code == 0
     junit = project / "reports" / "loopeval.xml"
+    output = project / "results" / "run.json"
     run = runner.invoke(
         app,
         [
@@ -177,11 +177,14 @@ def test_run_ci_gate_junit_and_detailed_report(tmp_path: Path) -> None:
             "fail,unresolved",
             "--junit",
             str(junit),
+            "--output",
+            str(output),
         ],
     )
     assert run.exit_code == 3, run.output
     assert "Evaluation gate failed" in run.output
     assert junit.exists()
+    assert output.exists()
     summary = json.loads(run.stdout)
     assert summary["failed_samples"][0]["sample_id"] == "offline-novel-example"
 

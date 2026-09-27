@@ -451,8 +451,9 @@ def run_command(
         summary = report_summary(report)
         typer.echo(json.dumps(summary, indent=2, default=str))
         if output:
+            output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(report.model_dump_json(indent=2) + "\n")
-            typer.echo(f"Wrote {output}")
+            typer.echo(f"Wrote {output}", err=True)
         if junit:
             write_junit_report(report, junit)
             typer.echo(f"Wrote {junit}", err=True)
@@ -583,6 +584,7 @@ def calibrate(
         payload = json.dumps(recommendation, indent=2)
         typer.echo(payload)
         if output:
+            output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(payload + "\n")
             typer.echo(f"Wrote {output}", err=True)
     finally:
@@ -703,7 +705,13 @@ def validate(
 @app.command()
 def promote(
     candidate_id: Annotated[str, typer.Argument()],
-    destination: Annotated[Path, typer.Option("--destination")] = Path("checks/learned"),
+    destination: Annotated[
+        Path | None,
+        typer.Option(
+            "--destination",
+            help="Output directory; defaults to checks/learned beside the config file.",
+        ),
+    ] = None,
     force: Annotated[
         bool,
         typer.Option("--force", help="Bypass review/validation gates; recorded in shell history."),
@@ -714,10 +722,11 @@ def promote(
     config = load_config(config_path)
     store = _store(config)
     try:
+        destination_path = destination or config_path.resolve().parent / "checks" / "learned"
         target = promote_candidate(
             store=store,
             candidate_id=candidate_id,
-            destination=destination,
+            destination=destination_path,
             policy=config.promotion,
             existing_check_ids={check.id for check in load_checks(config.checks)},
             force=force,
