@@ -12,7 +12,7 @@ evaluation suite.
 LoopEval repository: https://github.com/tbskin/loopeval
 Application area to evaluate: [OPTIONAL: feature, pipeline, or agent]
 Preferred Jev path: [OPTIONAL: TypeSafe direct or OpenRouter]
-Preferred LLM path: [OPTIONAL: OpenAI direct, OpenRouter, compatible endpoint, or none]
+Preferred LLM path: [OPTIONAL: OpenAI Chat, OpenAI Responses, Anthropic, OpenRouter, compatible endpoint, or none]
 Existing evaluation dataset: [OPTIONAL: path or description]
 
 Please do the following:
@@ -44,6 +44,8 @@ Please do the following:
    environment-variable name only. Never write, print, request, or commit an
    actual key. If provider choices are unspecified, keep the offline setup and
    document the available direct and OpenRouter paths without enabling one.
+   Run `loopeval doctor` locally. If the credentials are already available and
+   the user authorized provider calls, run `loopeval doctor --live` as well.
 10. If the selected LLM credential is already available in the environment, run
     `loopeval bootstrap` to propose the initial check library. Leave every
     proposal inactive. If credentials are unavailable, document the exact

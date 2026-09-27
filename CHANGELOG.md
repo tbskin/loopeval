@@ -2,6 +2,14 @@
 
 All notable changes follow Keep a Changelog and Semantic Versioning.
 
+## [Unreleased]
+
+### Added
+
+- direct Anthropic and OpenAI Responses fallback providers;
+- live provider verification through `loopeval doctor --live`;
+- HTTP 529 retry handling and bounded `Retry-After` support.
+
 ## [0.1.0] - 2026-09-26
 
 ### Added

@@ -62,7 +62,9 @@ invoke your app and which state should be captured for evaluation.
   [TypeSafe API key](https://console.typesafe.ai/) or an
   [OpenRouter API key](https://openrouter.ai/settings/keys)
 - an LLM API key if you want unresolved cases categorized and candidate checks
-  proposed
+  proposed. Supported routes include [OpenAI](https://platform.openai.com/api-keys),
+  [Anthropic](https://console.anthropic.com/settings/keys), OpenRouter, and
+  OpenAI-compatible hosted or local endpoints
 
 An OpenRouter key can provide both Jev and the fallback LLM. The default direct
 setup uses `TYPESAFE_API_KEY` for Jev and `OPENAI_API_KEY` for the fallback. A
@@ -96,7 +98,12 @@ export TYPESAFE_API_KEY='your-typesafe-key'
 export OPENAI_API_KEY='your-openai-key'
 
 loopeval doctor
+loopeval doctor --live
 ```
+
+`doctor` validates local setup without making provider calls. `doctor --live`
+makes one small, billable request to each configured provider to verify the
+credentials, endpoint, model, and structured-output path.
 
 Or use one OpenRouter key for both roles:
 
@@ -105,8 +112,9 @@ loopeval init evals --decision openrouter --fallback openrouter
 export OPENROUTER_API_KEY='your-openrouter-key'
 ```
 
-See [provider setup](docs/PROVIDERS.md) for Jev-only, compatible endpoint, local
-model, and custom Python configurations.
+See [provider setup](docs/PROVIDERS.md) for direct OpenAI Responses, direct
+Anthropic, Jev-only, compatible endpoint, local model, and custom Python
+configurations.
 
 ## Capture one application scenario
 
@@ -370,7 +378,7 @@ Mocks demonstrate control flow only. They are not quality measurements.
 | Command | Purpose |
 | --- | --- |
 | `loopeval init` | Create provider configuration, starter checks, and sample data |
-| `loopeval doctor` | Validate configuration, checks, directories, and credentials |
+| `loopeval doctor` | Validate local setup and optionally verify live providers |
 | `loopeval bootstrap` | Propose initial checks from requirements and scenarios |
 | `loopeval run` | Run the cascade and optionally enforce CI gates |
 | `loopeval report` | Read a stored summary or complete per-sample report |
