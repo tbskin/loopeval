@@ -153,6 +153,84 @@ def clear_fake() -> None:
     FakeAsyncClient.requests = []
 
 
+@pytest.mark.asyncio
+async def test_transport_exception_redacts_url_and_credentials(monkeypatch) -> None:
+    from loopeval.providers.http import post_json
+
+    class FailingClient(FakeAsyncClient):
+        async def post(self, *args, **kwargs):
+            raise httpx.ConnectError("https://private.test?key=secret")
+
+    monkeypatch.setattr(httpx, "AsyncClient", FailingClient)
+    with pytest.raises(ProviderError, match="ConnectError") as caught:
+        await post_json(ProviderConfig(type="mock", max_retries=0), "https://example.test", {}, {})
+    assert "secret" not in str(caught.value)
+    assert "private.test" not in str(caught.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [[], "not-json"])
+async def test_http_rejects_invalid_success_bodies(monkeypatch, payload) -> None:
+    from loopeval.providers.http import post_json
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+    request = httpx.Request("POST", "https://example.test")
+    FakeAsyncClient.responses = [
+        httpx.Response(
+            200,
+            content=(json.dumps(payload) if isinstance(payload, list) else payload),
+            request=request,
+        )
+    ]
+    with pytest.raises(ProviderError):
+        await post_json(ProviderConfig(type="mock"), "https://example.test", {}, {})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"status": "incomplete", "output_text": '{"ok":true}'},
+        {
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {"type": "output_text", "text": '{"ok":true}'},
+                        {"type": "refusal", "refusal": "No"},
+                    ],
+                }
+            ],
+        },
+    ],
+)
+async def test_responses_rejects_incomplete_or_refused_output(monkeypatch, raw) -> None:
+    monkeypatch.setenv("TEST_KEY", "secret")
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+    FakeAsyncClient.responses = [response(200, raw)]
+    provider = OpenAIResponsesProvider(
+        ProviderConfig(type="openai_responses", model="test", api_key_env="TEST_KEY")
+    )
+    with pytest.raises(ProviderError):
+        await provider.generate_structured(
+            system="x", user="x", schema=SIMPLE_SCHEMA, schema_name="test"
+        )
+
+
+def test_compatible_provider_does_not_ignore_a_named_missing_key(monkeypatch) -> None:
+    monkeypatch.delenv("MISSING_COMPATIBLE_TEST_KEY", raising=False)
+    with pytest.raises(MissingCredentialError):
+        OpenAICompatibleProvider(
+            ProviderConfig(
+                type="openai_compatible",
+                model="test",
+                base_url="https://example.test/v1",
+                api_key_env="MISSING_COMPATIBLE_TEST_KEY",
+            )
+        )
+
+
 def test_provider_factories_and_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MISSING_TEST_KEY", raising=False)
     with pytest.raises(MissingCredentialError):
