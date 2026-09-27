@@ -329,3 +329,13 @@ Prices change. LoopEval therefore calculates cost only from values in your
 configuration or a provider-reported cost. Update the configuration when prices
 change and keep historical config hashes with reports. An absent price yields an
 unknown cost rather than an invented zero.
+
+`budgets.run_cost_usd` is an observed-cost runtime ceiling for the fallback tier.
+LoopEval checks it before starting a fallback call and stops starting additional
+calls once recorded cost reaches the ceiling. It cannot reserve an unknown
+request cost in advance, and already concurrent calls may finish above the
+ceiling. Use `escalation.max_fallbacks_per_run` for a hard call-count limit and a
+provider-side spending limit for a hard account-level financial control.
+
+The CLI's `--max-cost-usd` is different: it is a post-run CI gate over the final
+reported cost. It fails when cost is unknown rather than assuming zero.

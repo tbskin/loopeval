@@ -358,8 +358,9 @@ LoopEval stores local state under `.loopeval/` by default:
 - Sample state sent for semantic checks goes to the selected Jev provider.
 - Only escalated sample state goes to the selected LLM provider.
 - Provider selection is explicit. LoopEval does not silently switch providers.
-- Timeouts, concurrency, state-size limits, fallback limits, and cost budgets are
-  configurable.
+- Timeouts, concurrency, state-size limits, and fallback-call limits are
+  configurable. The runtime cost ceiling stops new fallback calls after recorded
+  cost reaches the limit; it is not a prepaid hard cap.
 
 Evaluated content is untrusted data. LoopEval bounds and fences fallback input,
 requests structured output where supported, and validates provider responses

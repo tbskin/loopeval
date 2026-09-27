@@ -97,5 +97,6 @@ The evaluator is fail-observable:
 - provider errors are recorded as check errors and escalation reasons;
 - a missing fallback leaves an unresolved verdict instead of silently passing;
 - disabled or budget-exhausted fallbacks are explicit escalation reasons;
-- budgets stop expensive tiers without skipping exact checks;
+- fallback budgets stop additional expensive-tier calls without skipping exact
+  checks;
 - every completed run persists configuration identity and full per-sample results.
