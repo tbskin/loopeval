@@ -2,6 +2,10 @@
 
 ## Initial bootstrap
 
+Commands below run from the directory containing `loopeval.yaml`. From your app
+root, add `--config evals/loopeval.yaml` and prefix dataset paths with `evals/`.
+Live bootstrap and validation are billable.
+
 Users should not need to hand-author the first semantic check library. Bootstrap
 uses the configured LLM fallback to turn product requirements and representative
 scenarios into a small set of candidate deterministic and semantic checks:
@@ -32,10 +36,10 @@ LoopEval separates discovery, human judgment, and empirical validation.
 
 Escalated samples receive exactly one structured category:
 
-- `existing_failure` — a current check already describes the problem;
-- `novel_failure` — a distinct reusable failure needs a new check;
-- `acceptable` — the cheap tier abstained but no material failure exists;
-- `insufficient_evidence` — no reliable judgment can be made from supplied data.
+- `existing_failure`: a current check already describes the problem;
+- `novel_failure`: a distinct reusable failure needs a new check;
+- `acceptable`: the cheap tier abstained but no material failure exists;
+- `insufficient_evidence`: no reliable judgment can be made from supplied data.
 
 A novel response must include a complete candidate check. The candidate is
 validated as untrusted data and deduplicated by its stable proposed check id and
@@ -57,6 +61,14 @@ The reviewer should verify:
 
 Approval permits shadow evaluation; it does not activate the check.
 
+```bash
+loopeval candidates --status proposed
+loopeval candidate CANDIDATE_ID
+loopeval review CANDIDATE_ID --decision approve --notes "Reviewed the failure boundary."
+```
+
+Use an id printed by `candidates` in place of `CANDIDATE_ID`.
+
 If the proposed boundary or wording needs human refinement, export and revise it:
 
 ```bash
@@ -68,6 +80,8 @@ loopeval revise cand_abc123 candidate.yaml --notes "Clarified the failure bounda
 A revision keeps accumulated evidence but resets the candidate to `proposed` and
 deletes its prior validation result. It must be reviewed and validated again.
 The check id and kind cannot change because they define candidate identity.
+Active checks cannot be revised through the candidate workflow. Edit and version
+their YAML deliberately, revalidate the policy, and use source control for rollback.
 
 ## Held-out validation
 
@@ -81,6 +95,32 @@ computes:
 - F1 and resolved accuracy;
 - coverage and unresolved count.
 
+For a candidate with check id `refund.incorrect_window`, two illustrative rows are:
+
+```jsonl
+{"id":"holdout-bad","input":"Can I return this after 60 days?","output":"Yes.","context":"Returns are allowed within 30 days.","labels":["refund.incorrect_window"]}
+{"id":"holdout-good","input":"Can I return this after 45 days?","output":"No, the limit is 30 days.","context":"Returns are allowed within 30 days.","labels":[]}
+```
+
+Replace the check id and evidence for your candidate. Two rows do not satisfy
+the default policy. Collect at least 20 distinct reviewed examples, including
+failures, clear negatives, and hard boundary cases. Repeated copies of the same
+example are not independent evidence.
+
+```bash
+loopeval validate CANDIDATE_ID holdout.jsonl
+```
+
+Validation uses the decision provider without LLM fallback. It rejects unlabeled
+rows, duplicate ids or identical content, and known proposal-source examples
+even when their ids were changed. Bootstrap and discovery retain source ids and
+content hashes. These guards cannot detect near-duplicates, manual leakage, or
+source content absent from legacy records.
+
+Recall counts abstained positive examples as missed failures. Resolved accuracy
+excludes abstentions and must be read alongside resolved coverage. At least one
+positive and one negative example are required for promotion.
+
 The default gate favors precision because false accusations from an evaluator
 are costly: 20 examples, 0.90 precision, 0.50 recall, and 0.80 resolved coverage.
 Domains with severe false negatives should raise recall requirements and use
@@ -91,20 +131,29 @@ the proposer and threshold-selection process.
 
 ## Promotion
 
+```bash
+loopeval promote CANDIDATE_ID
+```
+
 Promotion writes a normal active YAML check under `checks/learned/`. The next
-run loads it exactly like a hand-authored check and includes it in Jev's batched
-questions. That concrete registry mutation is what reduces future fallback.
+run loads it like any other check and includes semantic checks in Jev's batched
+questions. This can reduce future fallback; measure the effect rather than
+assuming every new check saves money or improves quality.
 
 After promotion:
 
 1. rerun the frozen before-population;
 2. compare human agreement and unresolved rate;
-3. confirm fallback cost dropped;
+3. compare evaluation spend and fallback use against the LLM-judge baseline;
 4. inspect false positives introduced by the new check;
 5. commit the new file so source control supplies rollback history.
 
 Promotion refuses to overwrite a file or activate an id already present in the
 loaded registry, even with `--force`.
+The destination must be within a configured checks directory. Normal promotion
+also verifies that the candidate and decision-provider configuration still match
+the saved validation evidence. Revalidate after changing them. `--force` bypasses
+review and metric gates, not duplicate-id or overwrite protection.
 
 ## Deprecation and drift
 

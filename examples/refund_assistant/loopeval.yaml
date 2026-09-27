@@ -8,8 +8,6 @@ providers:
     model: jev-1.13.0
     api_key_env: TYPESAFE_API_KEY
     timeout_seconds: 20
-    input_cost_per_million: 0.042
-    output_cost_per_million: 0
   fallback:
     type: openai
     model: gpt-4.1-mini

@@ -1,5 +1,5 @@
 name: Feature request
-description: Propose a focused improvement to the standalone framework.
+description: Propose an improvement to LoopEval.
 title: "[Feature]: "
 labels: ["enhancement", "triage"]
 body:
@@ -14,7 +14,7 @@ body:
     id: proposal
     attributes:
       label: Proposed behavior
-      description: Describe the smallest provider-independent solution you would use.
+      description: Describe the behavior you would use and a concrete example.
     validations:
       required: true
   - type: textarea
@@ -24,10 +24,3 @@ body:
       description: How would this affect false positives, misses, review, privacy, or cost?
     validations:
       required: true
-  - type: checkboxes
-    id: scope
-    attributes:
-      label: Core scope
-      options:
-        - label: This fits LoopEval's provider-independent contracts and reviewed learning workflow.
-          required: true

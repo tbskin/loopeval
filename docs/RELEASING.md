@@ -1,10 +1,17 @@
 # Releasing LoopEval
 
-LoopEval publishes source distributions and universal Python wheels to PyPI.
+This is the release procedure, not a statement that a release exists.
+LoopEval will publish source distributions and universal Python wheels to PyPI.
 GitHub Actions uses PyPI Trusted Publishing, so the repository does not need a
 long-lived PyPI API token.
 
 ## One-time repository setup
+
+Before the first release, verify real-provider integrations and the learning
+loop against independent labeled data. Include an LLM-as-judge baseline, both
+at equal trace coverage and equal budget. Offline mocks and a successful package
+build are necessary but do not demonstrate judge quality or cost reduction.
+Publication requires an explicit maintainer decision after this evidence review.
 
 1. Create the `loopeval` project on PyPI, or configure a pending trusted
    publisher for the first release.
@@ -17,6 +24,11 @@ long-lived PyPI API token.
    deployments to it.
 4. Protect `.github/workflows/release.yml` with normal branch review and, when
    available, CODEOWNERS.
+5. Confirm the intended public repository visibility, issue templates, license,
+   and an operational private security-reporting channel before announcing it.
+
+A PyPI account or pending publisher does not reserve the project name. Recheck
+name availability when preparing the first publication.
 
 The dedicated publish job has only `id-token: write`. Build and test steps run in
 a separate job without that permission. The published distributions are the

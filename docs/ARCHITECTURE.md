@@ -49,7 +49,8 @@ written as JSON and JSONL so results remain portable if the storage engine chang
 ## Core invariants
 
 1. Deterministic checks always run before network calls.
-2. Missing evidence yields `skipped`, never an invented pass.
+2. Missing evidence yields `skipped`, never an invented pass; explicit presence
+   checks intentionally fail on absence.
 3. Every semantic question asks one narrow failure-oriented judgment.
 4. Applicable semantic checks share one decision request per sample.
 5. Batched request usage is counted once.
@@ -100,3 +101,17 @@ The evaluator is fail-observable:
 - fallback budgets stop additional expensive-tier calls without skipping exact
   checks;
 - every completed run persists configuration identity and full per-sample results.
+
+## Learning evidence and measurement
+
+Source ids and content hashes link candidates to discovery/bootstrap examples.
+Validation rejects known source overlap, duplicates, and missing human labels.
+Promotion requires evidence tied to the current candidate and decision config.
+These guards do not detect near-duplicates or external manual leakage.
+
+Reports fingerprint datasets and checks. Comparison rejects changed datasets;
+older reports without fingerprints remain explicitly unverified. Per-check
+coverage measures resolved judgments, not the fraction of production traces
+captured. The runner evaluates every submitted sample; trace capture and
+population-level coverage measurement belong to the application or experiment
+harness. See [measurement](CALIBRATION.md).

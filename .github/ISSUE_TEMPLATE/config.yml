@@ -1,5 +1,5 @@
-blank_issues_enabled: false
+blank_issues_enabled: true
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/tbskin/loopeval/security/advisories/new
-    about: Report vulnerabilities privately.
+    url: https://github.com/tbskin/loopeval/blob/main/SECURITY.md
+    about: Read private reporting instructions. Do not disclose vulnerabilities in public issues.

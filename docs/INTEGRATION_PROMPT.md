@@ -36,17 +36,17 @@ Please do the following:
    trace, metadata, and data fields as appropriate. Preserve stable sample ids.
 7. Create a concise requirements.md describing the behavior these scenarios
    should satisfy.
-8. Run the captured scenarios offline first with mock providers:
-   - loopeval doctor
-   - loopeval run <dataset>
-   Confirm that artifacts are written locally and that no credential is needed.
+8. Create a separate `loopeval init demo --offline` configuration for a mock
+   plumbing test. Run doctor and run with `--config demo/loopeval.yaml`.
+   Confirm artifacts are written locally without credentials. Mock judgments
+   do not measure app quality, even if real captured scenarios are supplied.
 9. Prepare the requested real-provider configuration, but reference API keys by
    environment-variable name only. Never write, print, request, or commit an
    actual key. If provider choices are unspecified, keep the offline setup and
    document the available direct and OpenRouter paths without enabling one.
    Run `loopeval doctor` locally. If the credentials are already available and
    the user authorized provider calls, run `loopeval doctor --live` as well.
-10. If the selected LLM credential is already available in the environment, run
+10. If the selected LLM credential is available and the user authorized billable calls, run
     `loopeval bootstrap` to propose the initial check library. Leave every
     proposal inactive. If credentials are unavailable, document the exact
     bootstrap command instead of substituting a mock proposal.
@@ -65,6 +65,11 @@ Please do the following:
     - exact commands to run offline and with the selected provider
     - where local reports are stored
     - any labeled data still needed before thresholds can be trusted
+
+For cost comparisons, the baseline is LLM-as-judge evaluation, not app inference.
+Measure equal-coverage cost and equal-budget trace coverage. Keep trace coverage,
+resolved judgments, and defect detection separate. Do not assume evaluating every
+trace means finding every failure, or claim 1-10% is every team's sampling rate.
 
 Keep the first integration small, readable, and easy to review. Do not invent
 quality claims from unlabeled data, do not activate generated candidate checks,

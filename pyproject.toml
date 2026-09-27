@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "loopeval"
 version = "0.1.0"
-description = "A standalone, self-improving evaluation cascade for deterministic checks, Jev, and BYOK LLM fallbacks."
+description = "Evaluate application traces with exact checks, Jev, and a learning LLM fallback."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }

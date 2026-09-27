@@ -1,7 +1,6 @@
 ## What changed
 
-Describe the user-visible behavior and why it belongs in LoopEval's standalone
-core.
+Describe the user-visible behavior and the problem it solves.
 
 ## Trust and cost impact
 

@@ -14,11 +14,7 @@ All notable changes follow Keep a Changelog and Semantic Versioning.
 - explicit candidate export and human revision with review-state reset;
 - HTTP 529 retry handling and bounded `Retry-After` support.
 
-## [0.1.0] - 2026-09-26
-
-### Added
-
-- standalone deterministic → Jev → BYOK LLM evaluation cascade;
+- deterministic, Jev, and BYOK LLM evaluation cascade;
 - Noul, Choice, and Score check schemas;
 - direct TypeSafe and OpenRouter Decisions providers;
 - OpenRouter, OpenAI, and OpenAI-compatible fallback provider;
@@ -27,3 +23,12 @@ All notable changes follow Keep a Changelog and Semantic Versioning.
 - candidate discovery, review, held-out validation, and guarded promotion;
 - cost, usage, latency, report, and before/after comparison support;
 - offline mock workflow, CLI, Python API, tests, and project documentation.
+
+### Improved
+
+- adopter-first setup, sample reference, provider paths, and measurement guidance;
+- holdout source tracking, duplicate protection, and validation provenance;
+- strict provider schemas, response validation, and private error handling;
+- unknown-cost accounting, cache bypass, and dataset-verified comparisons;
+- visible missing evidence, oversized state, and unresolved judgments;
+- run discovery and actionable CLI input errors.

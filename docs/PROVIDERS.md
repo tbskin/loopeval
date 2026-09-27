@@ -48,7 +48,9 @@ loopeval init evals --decision typesafe --fallback none
 ```
 
 Provider keys are read from the environment variables named in
-`loopeval.yaml`. LoopEval does not read or persist the key itself.
+`loopeval.yaml`. LoopEval reads the key at runtime but does not persist it.
+After `init evals`, add `--config evals/loopeval.yaml` to the commands below,
+or run them from inside `evals/`.
 
 Validate the files and credential references locally:
 
@@ -80,8 +82,6 @@ providers:
     api_key_env: TYPESAFE_API_KEY
     timeout_seconds: 20
     max_retries: 2
-    input_cost_per_million: 0.042
-    output_cost_per_million: 0
 ```
 
 Endpoint: `POST https://api.typesafe.ai/v1/systemone`.
@@ -145,6 +145,8 @@ providers:
 
 This route calls `POST https://api.openai.com/v1/responses` and uses
 `text.format` with a strict JSON Schema.
+Direct OpenAI Chat and Responses requests set `store: false`. This does not
+override other provider retention policies or your account settings.
 
 ## Anthropic fallback
 
@@ -202,7 +204,7 @@ uses a regular bearer token:
 providers:
   fallback:
     type: openai_compatible
-    model: gemini-3.8-flash
+    model: YOUR_GEMINI_MODEL
     base_url: https://generativelanguage.googleapis.com/v1beta/openai
     api_key_env: GEMINI_API_KEY
     structured_output: false
@@ -211,6 +213,7 @@ providers:
 Set `structured_output: true` only after `loopeval doctor --live` confirms that
 the selected model supports `response_format.json_schema` through the
 compatibility endpoint.
+Replace `YOUR_GEMINI_MODEL` with a model available to your account.
 
 ### Local Ollama
 
@@ -239,7 +242,7 @@ escalation behavior.
 
 ## Model versions
 
-The generated configuration uses convenient current model names. Before
+The generated configuration uses starter model names. Availability can change. Before
 calibrating production thresholds, pin a dated or otherwise immutable model
 version when the provider offers one. Changing a model can change probabilities,
 accuracy, cost, and escalation rate. Re-run labeled metrics and calibration after
@@ -329,6 +332,19 @@ Prices change. LoopEval therefore calculates cost only from values in your
 configuration or a provider-reported cost. Update the configuration when prices
 change and keep historical config hashes with reports. An absent price yields an
 unknown cost rather than an invented zero.
+
+For example, TypeSafe's [model reference](https://docs.typesafe.ai/models) lists
+Jev 1.13.0 input at $0.042 per million tokens and free output as of September 27,
+2026. To use that estimate, add `input_cost_per_million: 0.042` and
+`output_cost_per_million: 0` to the decision provider. Confirm the current rate
+for your route and account before using it. Generated configurations do not
+freeze these prices as defaults. Configure fallback pricing separately.
+
+Strict-output APIs require closed schemas. Internally, arbitrary JSON fields
+such as candidate criteria travel as JSON strings and are decoded before local
+validation. The public check YAML stays unchanged. Direct provider integrations
+are covered by transport tests; live account compatibility still needs explicit
+verification. A successful doctor probe is not a quality benchmark.
 
 `budgets.run_cost_usd` is an observed-cost runtime ceiling for the fallback tier.
 LoopEval checks it before starting a fallback call and stops starting additional
