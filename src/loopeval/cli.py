@@ -21,8 +21,17 @@ from .learning import (
     promote_candidate,
     validation_metrics,
 )
-from .models import CandidateCheck, CheckKind, EvalSample, OverallVerdict, ResultStatus
-from .providers import build_generative_provider
+from .models import (
+    CandidateCheck,
+    CheckKind,
+    EvalSample,
+    OverallVerdict,
+    QuestionKind,
+    ResultStatus,
+    TypedQuestion,
+)
+from .providers import build_decision_provider, build_generative_provider
+from .providers.base import ProviderError
 from .reporting import compare_reports, gate_failures, report_summary, write_junit_report
 from .storage import LocalStore
 
@@ -189,6 +198,45 @@ def _store(config: LoopEvalConfig) -> LocalStore:
     return LocalStore(config.storage.directory, config.storage.database)
 
 
+async def _verify_providers(config: LoopEvalConfig) -> list[str]:
+    decision = build_decision_provider(config.providers.decision)
+    decision_result = await decision.decide(
+        {"input": "LoopEval provider verification", "output": "connection check"},
+        [
+            TypedQuestion(
+                id="loopeval.connection",
+                kind=QuestionKind.NOUL,
+                instructions="Does `output` contain harmful or disallowed content?",
+                criteria={
+                    "true": "The output contains harmful or disallowed content.",
+                    "false": "The output is a benign connection-check phrase.",
+                },
+            )
+        ],
+    )
+    verified = [
+        f"Decision endpoint: verified ({decision_result.provider}/{decision_result.model}, "
+        f"{decision_result.latency_ms} ms)"
+    ]
+    fallback = build_generative_provider(config.providers.fallback)
+    if fallback is not None:
+        result, _, latency_ms = await fallback.generate_structured(
+            system="Return the requested connection-check object.",
+            user="Set ok to true.",
+            schema={
+                "type": "object",
+                "properties": {"ok": {"type": "boolean"}},
+                "required": ["ok"],
+                "additionalProperties": False,
+            },
+            schema_name="loopeval_doctor",
+        )
+        if result.get("ok") is not True:
+            raise ProviderError("fallback provider returned an invalid connection-check object")
+        verified.append(f"Fallback endpoint: verified ({fallback.identity}, {latency_ms} ms)")
+    return verified
+
+
 def _provider_configuration(
     *,
     decision: str,
@@ -309,6 +357,13 @@ def init(
 @app.command()
 def doctor(
     config_path: Annotated[Path, typer.Option("--config", "-c")] = Path("loopeval.yaml"),
+    live: Annotated[
+        bool,
+        typer.Option(
+            "--live",
+            help="Make one billable verification request to each configured provider.",
+        ),
+    ] = False,
 ) -> None:
     """Validate configuration, checks, directories, and credential references."""
     import os
@@ -342,6 +397,13 @@ def doctor(
     if missing:
         typer.echo("Missing required credentials: " + ", ".join(missing), err=True)
         raise typer.Exit(code=2)
+    if live:
+        try:
+            for line in asyncio.run(_verify_providers(config)):
+                typer.echo(line)
+        except (ProviderError, ValueError) as exc:
+            typer.echo(f"Live provider verification failed: {exc}", err=True)
+            raise typer.Exit(code=2) from exc
 
 
 @app.command("run")

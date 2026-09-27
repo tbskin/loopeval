@@ -24,6 +24,13 @@ def test_offline_cli_end_to_end(tmp_path: Path) -> None:
     assert doctor.exit_code == 0, doctor.output
     assert "Config: OK" in doctor.output
 
+    live_doctor = runner.invoke(
+        app, ["doctor", "--live", "-c", str(project / "loopeval.yaml")]
+    )
+    assert live_doctor.exit_code == 0, live_doctor.output
+    assert "Decision endpoint: verified" in live_doctor.output
+    assert "Fallback endpoint: verified" in live_doctor.output
+
     run = runner.invoke(
         app,
         ["run", str(project / "samples.jsonl"), "-c", str(project / "loopeval.yaml")],

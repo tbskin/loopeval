@@ -81,6 +81,8 @@ class MockGenerativeProvider(GenerativeProvider):
         schema: dict[str, Any],
         schema_name: str,
     ) -> tuple[dict[str, Any], ProviderUsage, int]:
+        if schema_name == "loopeval_doctor":
+            return {"ok": True}, ProviderUsage(), 0
         if schema_name == "loopeval_bootstrap":
             return (
                 {
