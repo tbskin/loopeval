@@ -67,10 +67,62 @@ def test_nested_field_requirements_and_skip() -> None:
     assert run_deterministic(check, sample).status == ResultStatus.SKIPPED
 
 
+@pytest.mark.parametrize(
+    "check",
+    [
+        spec("exact_match"),
+        spec("json_valid"),
+        spec("regex", params={"pattern": "secret", "should_match": False}),
+        spec("max_length", params={"maximum": 3}),
+        spec("required_fields", params={"required": ["answer"]}),
+    ],
+)
+def test_rules_skip_missing_evidence(check: CheckSpec) -> None:
+    result = run_deterministic(check, EvalSample(input="x"))
+    assert result.status == ResultStatus.SKIPPED
+    assert "output" in result.evidence["missing_required_fields"]
+
+
+def test_exact_match_requires_reference_but_allows_empty_values() -> None:
+    missing = run_deterministic(spec("exact_match"), EvalSample(input="x", output="answer"))
+    assert missing.status == ResultStatus.SKIPPED
+    assert missing.evidence == {"missing_required_fields": ["expected"]}
+    empty = run_deterministic(
+        spec("exact_match"), EvalSample(input="x", output="", expected="")
+    )
+    assert empty.status == ResultStatus.PASS
+
+
+def test_rule_requirements_report_only_missing_fields() -> None:
+    check = spec("not_empty", requires=["input", "context"])
+    result = run_deterministic(check, EvalSample(input="x", output="answer"))
+    assert result.evidence == {"missing_required_fields": ["context"]}
+
+
+@pytest.mark.parametrize("output", ["NaN", "Infinity", '{"value": NaN}', {"value": float("nan")}])
+def test_json_valid_rejects_non_json_constants(output: object) -> None:
+    result = run_deterministic(spec("json_valid"), EvalSample(input="x", output=output))
+    assert result.status == ResultStatus.FAIL
+
+
+def test_regex_preserves_falsey_values() -> None:
+    result = run_deterministic(
+        spec("regex", params={"pattern": "^0$"}), EvalSample(input="x", output=0)
+    )
+    assert result.status == ResultStatus.PASS
+
+
+def test_max_length_rejects_values_without_length() -> None:
+    result = run_deterministic(
+        spec("max_length", params={"maximum": 10}), EvalSample(input="x", output=123)
+    )
+    assert result.status == ResultStatus.ERROR
+
+
 def test_unknown_and_broken_rule_become_errors() -> None:
     assert run_deterministic(spec("missing"), EvalSample(input="x")).status == ResultStatus.ERROR
     assert (
-        run_deterministic(spec("regex", params={}), EvalSample(input="x")).status
+        run_deterministic(spec("regex", params={}), EvalSample(input="x", output="x")).status
         == ResultStatus.ERROR
     )
 

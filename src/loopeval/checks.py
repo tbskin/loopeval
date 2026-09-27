@@ -75,12 +75,16 @@ def get_field(sample: EvalSample, path: str) -> Any:
     return value
 
 
+def missing_required_fields(check: CheckSpec, sample: EvalSample) -> list[str]:
+    return [
+        field
+        for field in check.requires
+        if get_field(sample, field) in (None, "", [], {})
+    ]
+
+
 def applies(check: CheckSpec, sample: EvalSample) -> bool:
-    for field in check.requires:
-        value = get_field(sample, field)
-        if value is None or value == "" or value == [] or value == {}:
-            return False
-    return True
+    return not missing_required_fields(check, sample)
 
 
 Rule = Callable[[CheckSpec, EvalSample], tuple[bool, dict[str, Any]]]
@@ -112,17 +116,22 @@ def _exact_match(check: CheckSpec, sample: EvalSample) -> tuple[bool, dict[str, 
 
 def _json_valid(check: CheckSpec, sample: EvalSample) -> tuple[bool, dict[str, Any]]:
     value = get_field(sample, check.field)
-    if isinstance(value, (dict, list)):
-        return True, {"field": check.field, "already_structured": True}
+
+    def reject_constant(constant: str) -> None:
+        raise ValueError(f"{constant} is not a JSON value")
+
     try:
-        json.loads(value)
+        if isinstance(value, (dict, list)):
+            json.dumps(value, allow_nan=False)
+            return True, {"field": check.field, "already_structured": True}
+        json.loads(value, parse_constant=reject_constant)
         return True, {"field": check.field}
     except (TypeError, ValueError) as exc:
         return False, {"field": check.field, "parse_error": str(exc)}
 
 
 def _regex(check: CheckSpec, sample: EvalSample) -> tuple[bool, dict[str, Any]]:
-    value = str(get_field(sample, check.field) or "")
+    value = str(get_field(sample, check.field))
     pattern = check.params.get("pattern")
     if not pattern:
         raise ValueError("regex rule requires params.pattern")
@@ -139,7 +148,9 @@ def _regex(check: CheckSpec, sample: EvalSample) -> tuple[bool, dict[str, Any]]:
 
 def _max_length(check: CheckSpec, sample: EvalSample) -> tuple[bool, dict[str, Any]]:
     value = get_field(sample, check.field)
-    length = len(value) if value is not None and hasattr(value, "__len__") else 0
+    if not hasattr(value, "__len__"):
+        raise ValueError(f"max_length requires a sized value in {check.field}")
+    length = len(value)
     maximum = int(check.params.get("maximum", 0))
     if maximum <= 0:
         raise ValueError("max_length rule requires params.maximum > 0")
@@ -174,13 +185,21 @@ def register_rule(name: str, rule: Rule) -> None:
 def run_deterministic(check: CheckSpec, sample: EvalSample) -> CheckResult:
     if check.kind != CheckKind.DETERMINISTIC:
         raise ValueError(f"{check.id} is not deterministic")
-    if not applies(check, sample):
+    missing = missing_required_fields(check, sample)
+    # Presence checks intentionally fail on absent data. Other built-in rules
+    # need a value to judge, and exact matching also needs a reference value.
+    if check.rule in {"exact_match", "json_valid", "regex", "max_length", "required_fields"}:
+        fields = [check.field]
+        if check.rule == "exact_match":
+            fields.append(str(check.params.get("expected_field", "expected")))
+        missing.extend(field for field in fields if get_field(sample, field) is None)
+    if missing:
         return CheckResult(
             check_id=check.id,
             check_version=check.version,
             status=ResultStatus.SKIPPED,
             severity=check.severity,
-            evidence={"missing_required_fields": check.requires},
+            evidence={"missing_required_fields": list(dict.fromkeys(missing))},
         )
     rule = RULES.get(check.rule or "")
     if rule is None:
