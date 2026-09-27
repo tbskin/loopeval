@@ -33,11 +33,16 @@ def _bootstrap_prompt(
 ) -> str:
     delimiter = secrets.token_hex(12)
     scenario_payload = json.dumps(
-        [sample.model_dump(mode="json", exclude_none=True) for sample in samples],
+        [sample.state() for sample in samples],
         ensure_ascii=False,
         default=str,
     )
-    scenario_payload = scenario_payload[:max_chars].replace(delimiter, "[delimiter removed]")
+    if len(requirements) + len(scenario_payload) > max_chars:
+        raise ValueError(
+            "bootstrap requirements and scenarios exceed max_state_chars; "
+            "reduce the scenario count or content, or raise the limit"
+        )
+    scenario_payload = scenario_payload.replace(delimiter, "[delimiter removed]")
     catalog = [
         {"id": check.id, "name": check.name, "description": check.description}
         for check in active_checks
@@ -45,7 +50,7 @@ def _bootstrap_prompt(
     return (
         f"Propose at most {max_checks} checks. A smaller focused set is better.\n\n"
         "Product requirements supplied by the user:\n"
-        + requirements[:max_chars]
+        + requirements
         + "\n\nActive check catalog:\n"
         + json.dumps(catalog, ensure_ascii=False)
         + "\n\nAvailable deterministic rules:\n"
@@ -73,6 +78,8 @@ async def propose_initial_checks(
         raise ValueError("at least one representative scenario is required")
     if not 1 <= max_checks <= 20:
         raise ValueError("max_checks must be between 1 and 20")
+    if max_chars < 1:
+        raise ValueError("max_chars must be positive")
 
     schema = strict_provider_schema(BootstrapProposal)
     prompt = _bootstrap_prompt(
@@ -94,11 +101,6 @@ async def propose_initial_checks(
 
     active_ids = {check.id for check in active_checks}
     proposed_ids: set[str] = set()
-    fingerprint = hashlib.sha256(
-        (requirements + "\n" + "\n".join(sample.sample_id for sample in samples)).encode()
-    ).hexdigest()[:16]
-    source_id = f"bootstrap:{fingerprint}"
-    keys: list[str] = []
     for item in proposal.candidates:
         candidate = item.check
         candidate.to_spec()
@@ -109,6 +111,20 @@ async def propose_initial_checks(
         if candidate.kind == CheckKind.DETERMINISTIC and candidate.rule not in RULES:
             raise ValueError(f"provider proposed unknown deterministic rule {candidate.rule!r}")
         proposed_ids.add(candidate.id)
+
+    # Validate the complete response before storing any proposals. Otherwise
+    # an invalid later item leaves a partial library behind after a failed call.
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            {"requirements": requirements, "samples": [sample.state() for sample in samples]},
+            sort_keys=True,
+            ensure_ascii=False,
+        ).encode()
+    ).hexdigest()[:16]
+    source_id = f"bootstrap:{fingerprint}"
+    keys: list[str] = []
+    for item in proposal.candidates:
+        candidate = item.check
         key = candidate_key(candidate)
         store.upsert_candidate(
             candidate_id=key,
@@ -119,6 +135,8 @@ async def propose_initial_checks(
             sample_id=source_id,
             evidence=item.rationale,
             confidence=item.confidence,
+            source_sample_ids=[sample.sample_id for sample in samples],
+            source_sample_hashes=[sample.content_hash for sample in samples],
         )
         keys.append(key)
     return proposal, keys

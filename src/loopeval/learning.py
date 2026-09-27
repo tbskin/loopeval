@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import secrets
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,7 @@ from .models import (
     CandidateCheck,
     CheckLifecycle,
     CheckSpec,
+    EvalSample,
     FallbackVerdict,
     SampleResult,
 )
@@ -71,7 +74,11 @@ def fenced_sample(
     delimiter = secrets.token_hex(12)
     payload = json.dumps(
         {"sample": state, "check_results": check_results}, default=str, ensure_ascii=False
-    )[:max_chars]
+    )
+    if len(payload) > max_chars:
+        raise ValueError(
+            "fallback evidence exceeds max_state_chars; reduce sample content or raise the limit"
+        )
     payload = payload.replace(delimiter, "[delimiter removed]")
     return delimiter, (
         f"<<<UNTRUSTED_EVAL_DATA {delimiter}>>>\n"
@@ -139,6 +146,7 @@ def ingest_candidate(store: LocalStore, result: SampleResult) -> str | None:
         sample_id=result.sample_id,
         evidence=result.fallback.verdict.evidence,
         confidence=result.fallback.verdict.confidence,
+        source_sample_hashes=[result.sample_hash] if result.sample_hash else [],
     )
     return key
 
@@ -146,10 +154,13 @@ def ingest_candidate(store: LocalStore, result: SampleResult) -> str | None:
 def validation_metrics(predictions: list[bool | None], labels: list[bool]) -> dict[str, Any]:
     if len(predictions) != len(labels):
         raise ValueError("prediction and label counts differ")
-    tp = fp = tn = fn = unresolved = 0
+    tp = fp = tn = fn = unresolved_positive = unresolved_negative = 0
     for predicted, actual in zip(predictions, labels, strict=True):
         if predicted is None:
-            unresolved += 1
+            if actual:
+                unresolved_positive += 1
+            else:
+                unresolved_negative += 1
         elif predicted and actual:
             tp += 1
         elif predicted and not actual:
@@ -159,13 +170,18 @@ def validation_metrics(predictions: list[bool | None], labels: list[bool]) -> di
         else:
             tn += 1
     precision = tp / (tp + fp) if tp + fp else 0.0
-    recall = tp / (tp + fn) if tp + fn else 0.0
+    positive_examples = sum(labels)
+    recall = tp / positive_examples if positive_examples else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
     resolved = tp + fp + tn + fn
     return {
         "examples": len(labels),
+        "positive_examples": positive_examples,
+        "negative_examples": len(labels) - positive_examples,
         "resolved": resolved,
-        "unresolved": unresolved,
+        "unresolved": unresolved_positive + unresolved_negative,
+        "unresolved_positive": unresolved_positive,
+        "unresolved_negative": unresolved_negative,
         "coverage": resolved / len(labels) if labels else 0.0,
         "true_positive": tp,
         "false_positive": fp,
@@ -176,6 +192,35 @@ def validation_metrics(predictions: list[bool | None], labels: list[bool]) -> di
         "f1": f1,
         "accuracy": (tp + tn) / resolved if resolved else 0.0,
     }
+
+
+def validate_holdout_samples(
+    samples: list[EvalSample],
+    *,
+    source_sample_ids: Collection[str] = (),
+    source_sample_hashes: Collection[str] = (),
+) -> None:
+    """Reject unusable or known discovery data before making validation calls."""
+    if not samples:
+        raise ValueError("at least one held-out validation sample is required")
+    if any(sample.labels is None for sample in samples):
+        raise ValueError(
+            "every validation sample must include a labels field; use [] for a labeled negative"
+        )
+    sample_ids = [sample.sample_id for sample in samples]
+    if len(sample_ids) != len(set(sample_ids)):
+        raise ValueError("validation samples must have unique sample ids")
+    sample_hashes = [sample.content_hash for sample in samples]
+    if len(sample_hashes) != len(set(sample_hashes)):
+        raise ValueError("validation samples must have distinct sample content")
+    overlap = set(sample_ids).intersection(source_sample_ids)
+    if overlap:
+        raise ValueError(
+            "held-out validation cannot reuse discovery or bootstrap samples: "
+            + ", ".join(sorted(overlap))
+        )
+    if set(sample_hashes).intersection(source_sample_hashes):
+        raise ValueError("held-out validation cannot reuse discovery or bootstrap sample content")
 
 
 def calibrate_noul_thresholds(
@@ -189,6 +234,8 @@ def calibrate_noul_thresholds(
         raise ValueError("score and label counts differ")
     if not scores:
         raise ValueError("at least one labeled score is required")
+    if any(score is not None and (not math.isfinite(score) or not 0 <= score <= 1) for score in scores):
+        raise ValueError("Noul scores must be finite values between 0 and 1")
     if not 0 <= minimum_precision <= 1 or not 0 <= minimum_coverage <= 1:
         raise ValueError("minimum precision and coverage must be between 0 and 1")
 
@@ -236,6 +283,8 @@ def calibrate_noul_thresholds(
 def meets_promotion_policy(metrics: dict[str, Any], policy: PromotionPolicy) -> bool:
     return (
         int(metrics.get("examples", 0)) >= policy.minimum_examples
+        and int(metrics.get("positive_examples", 0)) > 0
+        and int(metrics.get("negative_examples", 0)) > 0
         and float(metrics.get("precision", 0.0)) >= policy.minimum_precision
         and float(metrics.get("recall", 0.0)) >= policy.minimum_recall
         and float(metrics.get("coverage", 0.0)) >= policy.minimum_coverage
@@ -254,6 +303,8 @@ def promote_candidate(
     row = store.get_candidate(candidate_id)
     if row is None:
         raise KeyError(f"candidate not found: {candidate_id}")
+    if row["status"] == "active":
+        raise ValueError("candidate is already active; change the versioned YAML check")
     if policy.require_human_approval and row["status"] not in {"approved", "shadow"} and not force:
         raise ValueError("candidate must be approved before promotion")
     if not force:
@@ -268,8 +319,10 @@ def promote_candidate(
     destination_path.mkdir(parents=True, exist_ok=True)
     filename = re.sub(r"[^a-z0-9_.-]+", "_", spec.id) + ".yaml"
     target = destination_path / filename
-    if target.exists():
-        raise FileExistsError(f"refusing to overwrite existing check: {target}")
-    target.write_text(yaml.safe_dump(spec.model_dump(mode="json"), sort_keys=False))
+    try:
+        with target.open("x", encoding="utf-8") as stream:
+            stream.write(yaml.safe_dump(spec.model_dump(mode="json"), sort_keys=False))
+    except FileExistsError as exc:
+        raise FileExistsError(f"refusing to overwrite existing check: {target}") from exc
     store.mark_promoted(candidate_id)
     return target

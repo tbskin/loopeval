@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -29,8 +30,10 @@ def test_store_run_cache_and_failure(tmp_path: Path) -> None:
     assert store.cache_get("key") == {"answer": 1}
 
     failed_id, _ = store.start_run("hash")
+    assert store.get_report(failed_id) is None
     store.fail_run(failed_id, "boom")
     assert store.list_runs()[0]["status"] == "failed"
+    assert store.get_report(failed_id) is None
     store.close()
 
 
@@ -68,6 +71,7 @@ def test_candidate_dedup_review_and_errors(tmp_path: Path) -> None:
     row = store.get_candidate("cand_x")
     assert row and row["evidence_count"] == 2
     assert row["sample_ids"] == ["one", "two"]
+    assert row["source_sample_ids"] == ["one", "two"]
     assert row["title"] == "X"
     assert row["check"] == item
     assert len(store.list_candidate_evidence("cand_x")) == 2
@@ -92,4 +96,58 @@ def test_candidate_dedup_review_and_errors(tmp_path: Path) -> None:
         store.save_validation("missing", {}, False)
     with pytest.raises(KeyError, match="not found"):
         store.mark_promoted("missing")
+    store.close()
+
+
+def test_candidate_sources_and_evidence_survive_concurrent_observations(tmp_path: Path) -> None:
+    store = LocalStore(tmp_path / "state")
+
+    def observe(index: int) -> None:
+        store.upsert_candidate(
+            candidate_id="cand_x", check_id="learned.x", title="X", description="X",
+            check_json={"id": "learned.x", "kind": "noul"}, sample_id=f"batch-{index}",
+            source_sample_ids=[f"sample-{index}"], source_sample_hashes=[f"hash-{index}"],
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(observe, range(20)))
+    observe(0)
+    row = store.get_candidate("cand_x")
+    assert row is not None
+    assert row["evidence_count"] == 20
+    assert len(store.list_candidate_evidence("cand_x")) == 20
+    assert {f"sample-{index}" for index in range(20)} <= set(row["source_sample_ids"])
+    assert set(row["source_sample_hashes"]) == {f"hash-{index}" for index in range(20)}
+    store.close()
+    reopened = LocalStore(tmp_path / "state")
+    assert reopened.get_candidate("cand_x")["source_sample_hashes"] == row["source_sample_hashes"]
+    reopened.close()
+
+
+def test_validation_cannot_approve_candidates_and_review_cannot_deactivate_them(
+    tmp_path: Path,
+) -> None:
+    store = LocalStore(tmp_path / "state")
+    item = {
+        "id": "learned.x", "name": "X", "description": "X", "kind": "noul",
+        "instructions": "Is X present?",
+    }
+    store.upsert_candidate(
+        candidate_id="cand_x", check_id="learned.x", title="X", description="X",
+        check_json=item, sample_id="one",
+    )
+    with pytest.raises(ValueError, match="approved before validation"):
+        store.save_validation("cand_x", {}, True)
+    store.review_candidate("cand_x", "approve", None)
+    store.save_validation("cand_x", {"examples": 20}, True)
+    store.revise_candidate("cand_x", {**item, "name": "Revised"}, None)
+    assert store.get_candidate("cand_x")["validation"] is None
+    with pytest.raises(ValueError, match="approved before validation"):
+        store.save_validation("cand_x", {}, True)
+    store.mark_promoted("cand_x")
+    with pytest.raises(ValueError, match="active candidates cannot be reviewed"):
+        store.review_candidate("cand_x", "reject", "This would not remove the active YAML")
+    with pytest.raises(ValueError, match="approved before validation"):
+        store.save_validation("cand_x", {}, True)
+    assert store.get_candidate("cand_x")["status"] == "active"
     store.close()

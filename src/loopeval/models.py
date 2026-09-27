@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
@@ -75,13 +77,18 @@ class EvalSample(BaseModel):
     def sample_id(self) -> str:
         if self.id:
             return self.id
+        return self.content_hash[:16]
+
+    @property
+    def content_hash(self) -> str:
+        """Identify evaluated content independently of labels or a user-assigned id."""
         payload = json.dumps(
-            self.model_dump(exclude={"id"}, mode="json"),
+            self.model_dump(exclude={"id", "labels", "expected_verdict"}, mode="json"),
             sort_keys=True,
             separators=(",", ":"),
             default=str,
         )
-        return hashlib.sha256(payload.encode()).hexdigest()[:16]
+        return hashlib.sha256(payload.encode()).hexdigest()
 
     def state(self) -> dict[str, Any]:
         state = self.model_dump(
@@ -195,22 +202,25 @@ class CheckSpec(BaseModel):
 
 
 class ProviderUsage(FrozenModel):
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cost_usd: float | None = None
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    cost_usd: float | None = Field(default=None, ge=0, allow_inf_nan=False)
 
 
 class DecisionAnswer(FrozenModel):
     kind: QuestionKind
     noul: float | None = Field(default=None, ge=0, le=1)
     choice: str | None = None
-    score: float | None = None
+    score: float | None = Field(default=None, allow_inf_nan=False)
     probabilities: dict[str, float] = Field(default_factory=dict)
     confidence: float | None = Field(default=None, ge=0, le=1)
 
     @model_validator(mode="after")
     def validate_shape(self) -> DecisionAnswer:
-        if any(probability < 0 or probability > 1 for probability in self.probabilities.values()):
+        if any(
+            not math.isfinite(probability) or not 0 <= probability <= 1
+            for probability in self.probabilities.values()
+        ):
             raise ValueError("probabilities must be between 0 and 1")
         if self.kind == QuestionKind.NOUL and self.noul is None:
             raise ValueError("noul answers require noul")
@@ -268,7 +278,9 @@ class CandidateCheck(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     requires: list[str] = Field(default_factory=list)
     failure_labels: list[str] = Field(default_factory=list)
-    uncertain_labels: list[str] = Field(default_factory=list)
+    uncertain_labels: list[str] = Field(
+        default_factory=lambda: ["other", "uncertain", "insufficient_evidence"]
+    )
     pass_threshold: float = 0.2
     failure_threshold: float = 0.8
     min_confidence: float = 0.6
@@ -340,6 +352,7 @@ class SampleResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sample_id: str
+    sample_hash: str | None = None
     verdict: OverallVerdict
     checks: list[CheckResult]
     expected_verdict: OverallVerdict | None = None
@@ -360,6 +373,8 @@ class EvaluationReport(BaseModel):
     started_at: datetime
     completed_at: datetime
     config_hash: str
+    dataset_hash: str | None = None
+    checks_hash: str | None = None
 
     @property
     def sample_count(self) -> int:
@@ -373,5 +388,21 @@ class EvaluationReport(BaseModel):
 
     @property
     def total_cost_usd(self) -> float | None:
-        costs = [r.usage.cost_usd for r in self.results if r.usage.cost_usd is not None]
-        return sum(costs) if costs else None
+        if not self.results or any(r.usage.cost_usd is None for r in self.results):
+            return None
+        return sum(r.usage.cost_usd for r in self.results if r.usage.cost_usd is not None)
+
+
+def dataset_fingerprint(samples: Sequence[EvalSample]) -> str:
+    """Hash the complete evaluation dataset, including labels, independent of order."""
+    records = [sample.model_dump(mode="json") | {"id": sample.sample_id} for sample in samples]
+    payload = json.dumps(sorted(records, key=lambda item: item["id"]), sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def checks_fingerprint(checks: Sequence[CheckSpec]) -> str:
+    payload = json.dumps(
+        [check.model_dump(mode="json") for check in sorted(checks, key=lambda item: item.id)],
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()

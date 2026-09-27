@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .models import EvaluationReport, SampleResult
+from .models import CandidateCheck, EvaluationReport, SampleResult
 
 
 def utcnow() -> str:
@@ -100,6 +100,13 @@ class LocalStore:
                     created_at TEXT NOT NULL,
                     PRIMARY KEY(candidate_id, sample_id)
                 );
+
+                CREATE TABLE IF NOT EXISTS candidate_sources (
+                    candidate_id TEXT NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+                    kind TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    PRIMARY KEY(candidate_id, kind, value)
+                );
                 """
             )
 
@@ -171,7 +178,7 @@ class LocalStore:
 
     def get_report(self, run_id: str) -> EvaluationReport | None:
         row = self._connection.execute(
-            "SELECT report_json FROM runs WHERE id=?", (run_id,)
+            "SELECT report_json FROM runs WHERE id=? AND status='completed'", (run_id,)
         ).fetchone()
         if not row or not row["report_json"]:
             return None
@@ -214,15 +221,17 @@ class LocalStore:
         sample_id: str,
         evidence: str = "",
         confidence: float = 0.0,
+        source_sample_ids: list[str] | None = None,
+        source_sample_hashes: list[str] | None = None,
     ) -> None:
         now = utcnow()
-        existing = self._connection.execute(
-            "SELECT evidence_count, sample_ids_json FROM candidates WHERE id=?", (candidate_id,)
-        ).fetchone()
-        if existing:
-            samples = set(json.loads(existing["sample_ids_json"]))
-            samples.add(sample_id)
-            with self._lock, self._connection:
+        with self._lock, self._connection:
+            existing = self._connection.execute(
+                "SELECT sample_ids_json FROM candidates WHERE id=?", (candidate_id,)
+            ).fetchone()
+            if existing:
+                samples = set(json.loads(existing["sample_ids_json"]))
+                samples.add(sample_id)
                 self._connection.execute(
                     """
                     UPDATE candidates
@@ -236,31 +245,38 @@ class LocalStore:
                         candidate_id,
                     ),
                 )
-                self._save_candidate_evidence(
-                    candidate_id, sample_id, evidence, confidence, created_at=now
+            else:
+                self._connection.execute(
+                    """
+                    INSERT INTO candidates(
+                        id, check_id, status, title, description, check_json,
+                        evidence_count, sample_ids_json, created_at, updated_at
+                    ) VALUES (?, ?, 'proposed', ?, ?, ?, 1, ?, ?, ?)
+                    """,
+                    (
+                        candidate_id,
+                        check_id,
+                        title,
+                        description,
+                        json.dumps(check_json),
+                        json.dumps([sample_id]),
+                        now,
+                        now,
+                    ),
                 )
-            return
-        with self._lock, self._connection:
-            self._connection.execute(
-                """
-                INSERT INTO candidates(
-                    id, check_id, status, title, description, check_json,
-                    evidence_count, sample_ids_json, created_at, updated_at
-                ) VALUES (?, ?, 'proposed', ?, ?, ?, 1, ?, ?, ?)
-                """,
-                (
-                    candidate_id,
-                    check_id,
-                    title,
-                    description,
-                    json.dumps(check_json),
-                    json.dumps([sample_id]),
-                    now,
-                    now,
-                ),
-            )
             self._save_candidate_evidence(
                 candidate_id, sample_id, evidence, confidence, created_at=now
+            )
+            sources = [
+                (candidate_id, "sample_id", value)
+                for value in (source_sample_ids if source_sample_ids is not None else [sample_id])
+            ]
+            sources.extend(
+                (candidate_id, "sample_hash", value) for value in (source_sample_hashes or [])
+            )
+            self._connection.executemany(
+                "INSERT OR IGNORE INTO candidate_sources(candidate_id, kind, value) VALUES (?, ?, ?)",
+                sources,
             )
 
     def _save_candidate_evidence(
@@ -309,12 +325,23 @@ class LocalStore:
         ).fetchone()
         return self._decode_candidate(dict(row)) if row else None
 
-    @staticmethod
-    def _decode_candidate(row: dict[str, Any]) -> dict[str, Any]:
+    def _decode_candidate(self, row: dict[str, Any]) -> dict[str, Any]:
         row["check"] = json.loads(row.pop("check_json"))
         row["sample_ids"] = json.loads(row.pop("sample_ids_json"))
         row["validation"] = (
             json.loads(row.pop("validation_json")) if row["validation_json"] else None
+        )
+        sources = self._connection.execute(
+            "SELECT kind, value FROM candidate_sources WHERE candidate_id=?", (row["id"],)
+        ).fetchall()
+        # Older stores retain individual discovery ids in sample_ids even
+        # though they predate content fingerprints and bootstrap provenance.
+        row["source_sample_ids"] = sorted(
+            set(row["sample_ids"])
+            | {source["value"] for source in sources if source["kind"] == "sample_id"}
+        )
+        row["source_sample_hashes"] = sorted(
+            source["value"] for source in sources if source["kind"] == "sample_hash"
         )
         return row
 
@@ -323,6 +350,13 @@ class LocalStore:
             raise ValueError("decision must be approve or reject")
         status = "approved" if decision == "approve" else "rejected"
         with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT status FROM candidates WHERE id=?", (candidate_id,)
+            ).fetchone()
+            if row is not None and row["status"] == "active":
+                raise ValueError(
+                    "active candidates cannot be reviewed; change the versioned YAML check"
+                )
             cursor = self._connection.execute(
                 "UPDATE candidates SET status=?, review_notes=?, updated_at=? WHERE id=?",
                 (status, notes, utcnow(), candidate_id),
@@ -352,6 +386,7 @@ class LocalStore:
             raise ValueError("a revision cannot change the candidate check id")
         if check_json.get("kind") != current.get("kind"):
             raise ValueError("a revision cannot change the candidate check kind")
+        CandidateCheck.model_validate(check_json).to_spec()
         now = utcnow()
         with self._lock, self._connection:
             self._connection.execute(
@@ -378,6 +413,11 @@ class LocalStore:
     def save_validation(self, candidate_id: str, metrics: dict[str, Any], passed: bool) -> None:
         status = "shadow" if passed else "approved"
         with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT status FROM candidates WHERE id=?", (candidate_id,)
+            ).fetchone()
+            if row is not None and row["status"] not in {"approved", "shadow"}:
+                raise ValueError("candidate must be approved before validation")
             cursor = self._connection.execute(
                 "UPDATE candidates SET validation_json=?, status=?, updated_at=? WHERE id=?",
                 (json.dumps(metrics), status, utcnow(), candidate_id),

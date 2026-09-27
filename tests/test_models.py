@@ -8,7 +8,10 @@ from loopeval.models import (
     CheckSpec,
     DecisionAnswer,
     EvalSample,
+    OverallVerdict,
+    ProviderUsage,
     QuestionKind,
+    dataset_fingerprint,
 )
 
 
@@ -18,6 +21,36 @@ def test_sample_id_is_stable_and_explicit_id_wins() -> None:
     assert first.sample_id == second.sample_id
     assert EvalSample(id="mine", input="hello").sample_id == "mine"
     assert first.state()["sample_id"] == first.sample_id
+
+
+def test_labels_do_not_change_sample_identity_or_provider_state() -> None:
+    plain = EvalSample(input="question", output="answer")
+    labeled = plain.model_copy(
+        update={"labels": ["quality.bad"], "expected_verdict": OverallVerdict.FAIL}
+    )
+    assert labeled.sample_id == plain.sample_id
+    assert labeled.content_hash == plain.content_hash
+    assert labeled.state() == plain.state()
+    assert dataset_fingerprint([plain]) != dataset_fingerprint([labeled])
+
+
+def test_dataset_fingerprint_ignores_order_but_tracks_content() -> None:
+    first = EvalSample(id="first", input="a", output="b")
+    second = EvalSample(id="second", input="c", output="d")
+    assert dataset_fingerprint([first, second]) == dataset_fingerprint([second, first])
+    edited = first.model_copy(update={"output": "different"})
+    assert dataset_fingerprint([edited, second]) != dataset_fingerprint([first, second])
+
+
+@pytest.mark.parametrize("cost", [-1, float("nan"), float("inf")])
+def test_provider_usage_rejects_invalid_costs(cost: float) -> None:
+    with pytest.raises(ValidationError):
+        ProviderUsage(cost_usd=cost)
+
+
+def test_decision_answer_rejects_nonfinite_probabilities() -> None:
+    with pytest.raises(ValidationError, match="between 0 and 1"):
+        DecisionAnswer(kind="noul", noul=0.5, probabilities={"true": float("nan")})
 
 
 @pytest.mark.parametrize(
