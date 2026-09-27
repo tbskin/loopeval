@@ -25,9 +25,7 @@ def test_offline_cli_end_to_end(tmp_path: Path) -> None:
     assert doctor.exit_code == 0, doctor.output
     assert "Config: OK" in doctor.output
 
-    live_doctor = runner.invoke(
-        app, ["doctor", "--live", "-c", str(project / "loopeval.yaml")]
-    )
+    live_doctor = runner.invoke(app, ["doctor", "--live", "-c", str(project / "loopeval.yaml")])
     assert live_doctor.exit_code == 0, live_doctor.output
     assert "Decision endpoint: verified" in live_doctor.output
     assert "Fallback endpoint: verified" in live_doctor.output
@@ -77,8 +75,8 @@ def test_offline_cli_end_to_end(tmp_path: Path) -> None:
             json.dumps(
                 {
                     "id": f"holdout-{index}",
-                    "input": "x",
-                    "output": "[NOVEL] pattern" if index < 10 else "healthy",
+                    "input": f"holdout scenario {index}",
+                    "output": (f"[NOVEL] pattern {index}" if index < 10 else f"healthy {index}"),
                     "labels": ["learned.novel_pattern"] if index < 10 else [],
                 }
             )
@@ -98,6 +96,31 @@ def test_offline_cli_end_to_end(tmp_path: Path) -> None:
     )
     assert validated.exit_code == 0, validated.output
     assert json.loads(validated.output)["passed_policy"] is True
+
+    # Validation evidence is tied to the decision configuration that produced it.
+    config_file = project / "loopeval.yaml"
+    saved_config = config_file.read_text()
+    changed_config = yaml.safe_load(saved_config)
+    changed_config["providers"]["decision"]["model"] = "another-version"
+    config_file.write_text(yaml.safe_dump(changed_config))
+    stale = runner.invoke(app, ["promote", candidate_id, "-c", str(config_file)])
+    assert stale.exit_code == 2, stale.output
+    assert "before promotion" in stale.output
+    config_file.write_text(saved_config)
+
+    outside = runner.invoke(
+        app,
+        [
+            "promote",
+            candidate_id,
+            "-c",
+            str(config_file),
+            "--destination",
+            str(tmp_path / "not-loaded"),
+        ],
+    )
+    assert outside.exit_code == 2, outside.output
+    assert "promotion destination" in outside.output
 
     promoted = runner.invoke(
         app,
@@ -257,16 +280,16 @@ def test_calibrate_noul_check_from_labeled_samples(tmp_path: Path) -> None:
     rows = [
         {
             "id": f"positive-{index}",
-            "input": "x",
-            "output": "[FAIL]",
+            "input": f"positive scenario {index}",
+            "output": f"[FAIL] {index}",
             "labels": ["quality.irrelevant"],
         }
         for index in range(5)
     ] + [
         {
             "id": f"negative-{index}",
-            "input": "x",
-            "output": "healthy",
+            "input": f"negative scenario {index}",
+            "output": f"healthy {index}",
             "labels": [],
         }
         for index in range(5)
@@ -299,9 +322,7 @@ def test_init_refuses_overwrite_and_version(tmp_path: Path) -> None:
     assert version.output.strip() == "0.1.0"
 
 
-def test_init_selects_direct_and_openrouter_provider_paths(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_init_selects_direct_and_openrouter_provider_paths(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     direct = tmp_path / "direct"
@@ -371,9 +392,7 @@ def test_init_selects_anthropic_and_openai_responses_fallbacks(tmp_path: Path) -
     }
 
     responses = tmp_path / "responses"
-    result = runner.invoke(
-        app, ["init", str(responses), "--fallback", "openai-responses"]
-    )
+    result = runner.invoke(app, ["init", str(responses), "--fallback", "openai-responses"])
     assert result.exit_code == 0, result.output
     config = yaml.safe_load((responses / "loopeval.yaml").read_text())
     assert config["providers"]["fallback"]["type"] == "openai_responses"
@@ -396,3 +415,130 @@ def test_python_api_accepts_custom_provider_injection(tmp_path: Path) -> None:
     ) as loop:
         assert loop.evaluator.decision_provider is custom
         assert loop.evaluator.fallback_provider is None
+
+
+def test_init_creates_requirements_and_preserves_gitignore(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("private-data/")
+    result = runner.invoke(app, ["init", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / ".gitignore").read_text() == "private-data/\n.loopeval/\n"
+    assert (tmp_path / "requirements.md").exists()
+    assert "[NOVEL]" not in (tmp_path / "samples.jsonl").read_text()
+    assert "60 days" in (tmp_path / "samples.jsonl").read_text()
+    config = yaml.safe_load((tmp_path / "loopeval.yaml").read_text())
+    assert "input_cost_per_million" not in config["providers"]["decision"]
+
+
+def test_cli_input_errors_are_actionable_without_tracebacks(tmp_path: Path) -> None:
+    config = tmp_path / "loopeval.yaml"
+    config.write_text("providers: [broken")
+    invalid = runner.invoke(app, ["doctor", "-c", str(config)])
+    assert invalid.exit_code == 2
+    assert "invalid YAML" in invalid.output
+    assert "Traceback" not in invalid.output
+    config.write_text("unknown: true\n")
+    invalid = runner.invoke(app, ["doctor", "-c", str(config)])
+    assert invalid.exit_code == 2
+    assert "Extra inputs" in invalid.output
+    missing = runner.invoke(app, ["doctor", "-c", str(tmp_path / "missing.yaml")])
+    assert missing.exit_code == 2
+
+
+def test_no_cache_bypasses_existing_cache_and_runs_lists_ids(tmp_path: Path, monkeypatch) -> None:
+    runner.invoke(app, ["init", str(tmp_path), "--offline"])
+    config = tmp_path / "loopeval.yaml"
+    args = ["run", str(tmp_path / "samples.jsonl"), "-c", str(config)]
+    calls = []
+    original = MockDecisionProvider.decide
+
+    async def counted(self, state, questions):
+        calls.append(state)
+        return await original(self, state, questions)
+
+    monkeypatch.setattr(MockDecisionProvider, "decide", counted)
+    first = runner.invoke(app, args)
+    assert first.exit_code == 0, first.output
+    count = len(calls)
+    assert count > 0
+    assert runner.invoke(app, args).exit_code == 0
+    assert len(calls) == count
+    uncached = runner.invoke(app, [*args, "--no-cache"])
+    assert uncached.exit_code == 0, uncached.output
+    assert len(calls) == 2 * count
+    listed = runner.invoke(app, ["runs", "-c", str(config), "--limit", "1"])
+    assert listed.exit_code == 0, listed.output
+    rows = json.loads(listed.output)
+    assert len(rows) == 1
+    assert json.loads(uncached.output)["run_id"] == rows[0]["id"]
+
+
+def test_validation_rejects_source_content_and_labels_before_requests(
+    tmp_path: Path, monkeypatch
+) -> None:
+    runner.invoke(app, ["init", str(tmp_path), "--offline"])
+    config = tmp_path / "loopeval.yaml"
+    boot = runner.invoke(
+        app,
+        [
+            "bootstrap",
+            "-c",
+            str(config),
+            "--scenarios",
+            str(tmp_path / "samples.jsonl"),
+            "--requirements",
+            str(tmp_path / "requirements.md"),
+        ],
+    )
+    assert boot.exit_code == 0, boot.output
+    with LoopEval.from_config(config) as loop:
+        candidate_id = loop.store.list_candidates()[0]["id"]
+    assert (
+        runner.invoke(
+            app, ["review", candidate_id, "--decision", "approve", "-c", str(config)]
+        ).exit_code
+        == 0
+    )
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("Validation must reject this dataset before a provider request")
+
+    monkeypatch.setattr(MockDecisionProvider, "decide", forbidden)
+    source = json.loads((tmp_path / "samples.jsonl").read_text().splitlines()[0])
+    source["id"] = "renamed-source"
+    source["labels"] = []
+    holdout = tmp_path / "holdout.jsonl"
+    holdout.write_text(json.dumps(source) + "\n")
+    result = runner.invoke(app, ["validate", candidate_id, str(holdout), "-c", str(config)])
+    assert result.exit_code == 2, result.output
+    assert "cannot reuse" in result.output
+    holdout.write_text('{"input":"new","output":"new"}\n')
+    result = runner.invoke(app, ["validate", candidate_id, str(holdout), "-c", str(config)])
+    assert result.exit_code == 2, result.output
+    assert "labels field" in result.output
+
+
+def test_calibration_does_not_require_the_fallback_key(tmp_path: Path, monkeypatch) -> None:
+    runner.invoke(app, ["init", str(tmp_path), "--offline"])
+    config = tmp_path / "loopeval.yaml"
+    settings = yaml.safe_load(config.read_text())
+    settings["providers"]["fallback"] = {
+        "type": "openai",
+        "model": "test",
+        "api_key_env": "MISSING_FALLBACK_TEST_KEY",
+    }
+    config.write_text(yaml.safe_dump(settings))
+    monkeypatch.delenv("MISSING_FALLBACK_TEST_KEY", raising=False)
+    dataset = tmp_path / "labeled.jsonl"
+    dataset.write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in [
+                {"input": "bad", "output": "[FAIL]", "labels": ["quality.irrelevant"]},
+                {"input": "good", "output": "healthy", "labels": []},
+            ]
+        )
+    )
+    result = runner.invoke(
+        app, ["calibrate", "quality.irrelevant", str(dataset), "-c", str(config)]
+    )
+    assert result.exit_code == 0, result.output

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 import yaml
+from pydantic import ValidationError
+from typer.core import TyperGroup
 
 from . import __version__
 from .api import LoopEval
@@ -19,6 +22,7 @@ from .learning import (
     ingest_candidate,
     meets_promotion_policy,
     promote_candidate,
+    validate_holdout_samples,
     validation_metrics,
 )
 from .models import (
@@ -29,16 +33,41 @@ from .models import (
     QuestionKind,
     ResultStatus,
     TypedQuestion,
+    checks_fingerprint,
+    dataset_fingerprint,
 )
 from .providers import build_decision_provider, build_generative_provider
-from .providers.base import ProviderError
+from .providers.base import MissingCredentialError, ProviderError
 from .reporting import compare_reports, gate_failures, report_summary, write_junit_report
 from .storage import LocalStore
 
+
+class LoopEvalGroup(TyperGroup):
+    """Render expected input errors consistently across installed and Python entrypoints."""
+
+    def invoke(self, ctx: Any) -> Any:
+        try:
+            return super().invoke(ctx)
+        except ValidationError as exc:
+            errors = "; ".join(
+                f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+                for error in exc.errors(include_input=False, include_url=False)
+            )
+            raise typer.BadParameter(errors) from exc
+        except yaml.YAMLError as exc:
+            raise typer.BadParameter("invalid YAML; check indentation and field syntax") from exc
+        except (ValueError, OSError, KeyError, MissingCredentialError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        except ProviderError as exc:
+            typer.echo(f"Provider error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+
 app = typer.Typer(
+    cls=LoopEvalGroup,
     name="loopeval",
     no_args_is_help=True,
-    help="Standalone, self-improving evaluations with deterministic checks, Jev, and BYOK LLMs.",
+    help="Evaluate application outputs with exact checks, Jev, and your chosen LLM.",
 )
 
 
@@ -80,16 +109,12 @@ DECISION_PRESETS: dict[str, dict[str, object]] = {
         "model": "jev-1.13.0",
         "api_key_env": "TYPESAFE_API_KEY",
         "timeout_seconds": 20,
-        "input_cost_per_million": 0.042,
-        "output_cost_per_million": 0,
     },
     "openrouter": {
         "type": "openrouter_decisions",
         "model": "typesafe/jev-1.13",
         "api_key_env": "OPENROUTER_API_KEY",
         "timeout_seconds": 20,
-        "input_cost_per_million": 0.042,
-        "output_cost_per_million": 0,
     },
     "mock": {"type": "mock", "model": "mock-decision"},
 }
@@ -185,6 +210,18 @@ SAMPLES_TEMPLATE = [
         "expected_verdict": "pass",
     },
     {
+        "id": "incorrect-refund-window",
+        "input": "How long do I have to request a refund?",
+        "output": "You have 60 days to request a refund.",
+        "context": ["Customers may request a refund within 30 days of purchase."],
+        "labels": ["grounding.unsupported_claim"],
+        "expected_verdict": "fail",
+    },
+]
+
+OFFLINE_SAMPLES_TEMPLATE = [
+    SAMPLES_TEMPLATE[0],
+    {
         "id": "offline-novel-example",
         "input": "Demonstrate the learning loop.",
         "output": "[NOVEL] This marker makes the offline mock propose a candidate check.",
@@ -192,6 +229,15 @@ SAMPLES_TEMPLATE = [
         "expected_verdict": "fail",
     },
 ]
+
+REQUIREMENTS_TEMPLATE = """# Application requirements
+
+Replace these example requirements with your application's expected behavior.
+
+- Answers must address the user's request.
+- Factual claims must be supported by the supplied context when context is provided.
+- Refund answers must use the 30-day policy in the supplied context.
+"""
 
 
 def _store(config: LoopEvalConfig) -> LocalStore:
@@ -214,6 +260,9 @@ async def _verify_providers(config: LoopEvalConfig) -> list[str]:
             )
         ],
     )
+    answer = decision_result.answers.get("loopeval.connection")
+    if answer is None or answer.kind != QuestionKind.NOUL or answer.noul is None:
+        raise ProviderError("decision provider omitted a valid connection-check answer")
     verified = [
         f"Decision endpoint: verified ({decision_result.provider}/{decision_result.model}, "
         f"{decision_result.latency_ms} ms)"
@@ -247,6 +296,8 @@ def _provider_configuration(
     fallback_key_env: str | None,
     fallback_base_url: str | None,
 ) -> dict[str, object]:
+    if fallback_base_url and fallback != "openai-compatible":
+        raise typer.BadParameter("--fallback-base-url requires --fallback openai-compatible")
     if decision not in DECISION_PRESETS:
         choices = ", ".join(DECISION_PRESETS)
         raise typer.BadParameter(f"--decision must be one of: {choices}")
@@ -315,7 +366,12 @@ def init(
     config_path = path / "loopeval.yaml"
     check_path = path / "checks" / "core.yaml"
     sample_path = path / "samples.jsonl"
-    existing = [target for target in (config_path, check_path, sample_path) if target.exists()]
+    requirements_path = path / "requirements.md"
+    existing = [
+        target
+        for target in (config_path, check_path, sample_path, requirements_path)
+        if target.exists()
+    ]
     if existing and not force:
         raise typer.BadParameter(
             "refusing to overwrite existing files: " + ", ".join(str(item) for item in existing)
@@ -340,12 +396,22 @@ def init(
     check_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(yaml.safe_dump(config, sort_keys=False))
     check_path.write_text(yaml.safe_dump(CHECKS_TEMPLATE, sort_keys=False))
-    sample_path.write_text("".join(json.dumps(sample) + "\n" for sample in SAMPLES_TEMPLATE))
+    samples = OFFLINE_SAMPLES_TEMPLATE if offline else SAMPLES_TEMPLATE
+    sample_path.write_text("".join(json.dumps(sample) + "\n" for sample in samples))
+    requirements_path.write_text(REQUIREMENTS_TEMPLATE)
+    ignore_path = path / ".gitignore"
+    ignored = ignore_path.read_text() if ignore_path.exists() else ""
+    if ".loopeval/" not in ignored.splitlines():
+        ignore_path.write_text(
+            ignored + ("\n" if ignored and not ignored.endswith("\n") else "") + ".loopeval/\n"
+        )
     typer.echo(f"Initialized LoopEval in {path.resolve()}")
     if not offline:
         decision_provider = config["providers"]["decision"]
         fallback_provider = config["providers"]["fallback"]
-        typer.echo(f"Jev: {decision_provider['type']} ({decision_provider['api_key_env']})")
+        typer.echo(
+            f"Jev: {decision_provider['type']} ({decision_provider.get('api_key_env', 'no credential')})"
+        )
         if fallback_provider["type"] == "disabled":
             typer.echo("LLM fallback: disabled")
         else:
@@ -426,13 +492,15 @@ def run_command(
     ] = None,
     max_unresolved_rate: Annotated[
         float | None,
-        typer.Option(
-            "--max-unresolved-rate", min=0, max=1, help="Maximum unresolved fraction."
-        ),
+        typer.Option("--max-unresolved-rate", min=0, max=1, help="Maximum unresolved fraction."),
     ] = None,
     max_cost_usd: Annotated[
         float | None, typer.Option("--max-cost-usd", min=0, help="Maximum reported run cost.")
     ] = None,
+    no_cache: Annotated[
+        bool,
+        typer.Option("--no-cache", help="Call providers afresh when measuring quality or cost."),
+    ] = False,
 ) -> None:
     """Run the full deterministic → decision → fallback cascade."""
     requested_verdicts: set[OverallVerdict] = set()
@@ -440,13 +508,14 @@ def run_command(
         try:
             requested_verdicts.add(OverallVerdict(raw))
         except ValueError as exc:
-            raise typer.BadParameter(
-                "--fail-on accepts only 'fail' and 'unresolved'"
-            ) from exc
+            raise typer.BadParameter("--fail-on accepts only 'fail' and 'unresolved'") from exc
     if OverallVerdict.PASS in requested_verdicts:
         raise typer.BadParameter("--fail-on accepts only 'fail' and 'unresolved'")
     samples = load_samples(dataset)
-    with LoopEval.from_config(config_path) as loop:
+    config = load_config(config_path)
+    if no_cache:
+        config.storage.cache = False
+    with LoopEval(config) as loop:
         report = loop.run(samples)
         summary = report_summary(report)
         typer.echo(json.dumps(summary, indent=2, default=str))
@@ -539,12 +608,8 @@ def calibrate(
     check_id: Annotated[str, typer.Argument(help="Active Noul check id")],
     dataset: Annotated[Path, typer.Argument(help="Labeled JSON or JSONL dataset")],
     config_path: Annotated[Path, typer.Option("--config", "-c")] = Path("loopeval.yaml"),
-    minimum_precision: Annotated[
-        float, typer.Option("--minimum-precision", min=0, max=1)
-    ] = 0.9,
-    minimum_coverage: Annotated[
-        float, typer.Option("--minimum-coverage", min=0, max=1)
-    ] = 0.8,
+    minimum_precision: Annotated[float, typer.Option("--minimum-precision", min=0, max=1)] = 0.9,
+    minimum_coverage: Annotated[float, typer.Option("--minimum-coverage", min=0, max=1)] = 0.8,
     output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
 ) -> None:
     """Recommend Noul thresholds from human-labeled examples."""
@@ -556,12 +621,10 @@ def calibrate(
     if check.kind != CheckKind.NOUL:
         raise typer.BadParameter("calibrate currently supports Noul checks only")
     samples = load_samples(dataset)
-    if any(sample.labels is None for sample in samples):
-        raise typer.BadParameter(
-            "every calibration sample must include a labels field; use [] for a labeled negative"
-        )
-    loop = LoopEval(config)
+    validate_holdout_samples(samples)
+    loop = LoopEval(config, fallback_provider=None)
     try:
+
         async def evaluate_all() -> list[float | None]:
             semaphore = asyncio.Semaphore(config.budgets.concurrency)
 
@@ -613,7 +676,7 @@ def candidates(
             )
             typer.echo(
                 f"{row['id']}  {row['status']:<9} evidence={row['evidence_count']}  "
-                f"{row['check_id']} — {row['title']}{suffix}"
+                f"{row['check_id']}: {row['title']}{suffix}"
             )
     finally:
         store.close()
@@ -703,13 +766,19 @@ def validate(
     """Shadow a candidate on held-out samples and save precision/recall evidence."""
     config = load_config(config_path)
     samples = load_samples(dataset)
-    loop = LoopEval(config)
+    validate_holdout_samples(samples)
+    loop = LoopEval(config, fallback_provider=None)
     try:
         row = loop.store.get_candidate(candidate_id)
         if row is None:
             raise typer.BadParameter(f"candidate not found: {candidate_id}")
         if row["status"] not in {"approved", "shadow"}:
             raise typer.BadParameter("candidate must be approved before validation")
+        validate_holdout_samples(
+            samples,
+            source_sample_ids=row["source_sample_ids"],
+            source_sample_hashes=row["source_sample_hashes"],
+        )
         candidate = CandidateCheck.model_validate(row["check"])
         check = candidate.to_spec()
 
@@ -729,12 +798,15 @@ def validate(
             return predictions
 
         predictions = asyncio.run(evaluate_all())
-        if any(sample.labels is None for sample in samples):
-            raise typer.BadParameter(
-                "every validation sample must include a labels field; use [] for a labeled negative"
-            )
         labels = [check.id in (sample.labels or []) for sample in samples]
         metrics = validation_metrics(predictions, labels)
+        metrics.update(
+            dataset_hash=dataset_fingerprint(samples),
+            sample_ids=[sample.sample_id for sample in samples],
+            check_hash=checks_fingerprint([check]),
+            provider_hash=_decision_fingerprint(config),
+            provider=loop.evaluator.decision_provider.identity,
+        )
         passed = meets_promotion_policy(metrics, config.promotion)
         loop.store.save_validation(candidate_id, metrics, passed)
         typer.echo(json.dumps({**metrics, "passed_policy": passed}, indent=2))
@@ -754,7 +826,7 @@ def promote(
     ] = None,
     force: Annotated[
         bool,
-        typer.Option("--force", help="Bypass review/validation gates; recorded in shell history."),
+        typer.Option("--force", help="Bypass review and validation gates."),
     ] = False,
     config_path: Annotated[Path, typer.Option("--config", "-c")] = Path("loopeval.yaml"),
 ) -> None:
@@ -763,6 +835,23 @@ def promote(
     store = _store(config)
     try:
         destination_path = destination or config_path.resolve().parent / "checks" / "learned"
+        if not force:
+            row = store.get_candidate(candidate_id)
+            if row is None:
+                raise typer.BadParameter(f"candidate not found: {candidate_id}")
+            validation = row["validation"] or {}
+            check = CandidateCheck.model_validate(row["check"]).to_spec()
+            if validation.get("check_hash") != checks_fingerprint([check]) or validation.get(
+                "provider_hash"
+            ) != _decision_fingerprint(config):
+                raise typer.BadParameter(
+                    "validate this candidate with the current check and decision provider before promotion"
+                )
+        roots = [Path(pattern).resolve() for pattern in config.checks if Path(pattern).is_dir()]
+        if not any(destination_path.resolve().is_relative_to(root) for root in roots):
+            raise typer.BadParameter(
+                "promotion destination must be inside a configured checks directory; add it to loopeval.yaml first"
+            )
         target = promote_candidate(
             store=store,
             candidate_id=candidate_id,
@@ -772,6 +861,27 @@ def promote(
             force=force,
         )
         typer.echo(f"Promoted {candidate_id} to {target}")
+    finally:
+        store.close()
+
+
+def _decision_fingerprint(config: LoopEvalConfig) -> str:
+    settings = {
+        "provider": config.providers.decision.model_dump(mode="json"),
+        "max_state_chars": config.budgets.max_state_chars,
+    }
+    return hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()
+
+
+@app.command()
+def runs(
+    config_path: Annotated[Path, typer.Option("--config", "-c")] = Path("loopeval.yaml"),
+    limit: Annotated[int, typer.Option("--limit", min=1, max=1000)] = 20,
+) -> None:
+    """List recent runs and their ids for report and compare commands."""
+    store = _store(load_config(config_path))
+    try:
+        typer.echo(json.dumps(store.list_runs(limit), indent=2))
     finally:
         store.close()
 
