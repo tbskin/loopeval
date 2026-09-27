@@ -68,7 +68,7 @@ class EvalSample(BaseModel):
     trace: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     data: dict[str, Any] = Field(default_factory=dict)
-    labels: list[str] = Field(default_factory=list)
+    labels: list[str] | None = None
     expected_verdict: OverallVerdict | None = None
 
     @property
@@ -342,6 +342,8 @@ class SampleResult(BaseModel):
     sample_id: str
     verdict: OverallVerdict
     checks: list[CheckResult]
+    expected_verdict: OverallVerdict | None = None
+    expected_labels: list[str] | None = None
     escalated: bool = False
     escalation_reasons: list[str] = Field(default_factory=list)
     fallback: FallbackResult | None = None

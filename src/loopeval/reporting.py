@@ -8,6 +8,78 @@ from xml.etree import ElementTree
 from .models import EvaluationReport, OverallVerdict
 
 
+def _classification_metrics(predictions: list[bool | None], labels: list[bool]) -> dict[str, Any]:
+    tp = fp = tn = fn = unresolved = 0
+    for predicted, actual in zip(predictions, labels, strict=True):
+        if predicted is None:
+            unresolved += 1
+        elif predicted and actual:
+            tp += 1
+        elif predicted and not actual:
+            fp += 1
+        elif not predicted and actual:
+            fn += 1
+        else:
+            tn += 1
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    resolved = tp + fp + tn + fn
+    return {
+        "examples": len(labels),
+        "resolved": resolved,
+        "unresolved": unresolved,
+        "coverage": resolved / len(labels) if labels else 0.0,
+        "true_positive": tp,
+        "false_positive": fp,
+        "true_negative": tn,
+        "false_negative": fn,
+        "precision": precision,
+        "recall": recall,
+        "f1": 2 * precision * recall / (precision + recall) if precision + recall else 0.0,
+        "accuracy": (tp + tn) / resolved if resolved else 0.0,
+    }
+
+
+def labeled_run_metrics(report: EvaluationReport) -> dict[str, Any]:
+    verdict_labeled = [result for result in report.results if result.expected_verdict is not None]
+    correct = sum(result.verdict == result.expected_verdict for result in verdict_labeled)
+    confusion: dict[str, Counter[str]] = {}
+    for result in verdict_labeled:
+        expected = result.expected_verdict.value if result.expected_verdict else ""
+        confusion.setdefault(expected, Counter())[result.verdict.value] += 1
+
+    check_labeled = [result for result in report.results if result.expected_labels is not None]
+    check_ids = sorted(
+        {
+            check_id
+            for result in check_labeled
+            for check_id in [
+                *(result.expected_labels or []),
+                *(check.check_id for check in result.checks),
+            ]
+        }
+    )
+    per_check: dict[str, Any] = {}
+    for check_id in check_ids:
+        predictions: list[bool | None] = []
+        labels: list[bool] = []
+        for result in check_labeled:
+            check_result = next((check for check in result.checks if check.check_id == check_id), None)
+            if check_result is None or check_result.status.value not in {"pass", "fail"}:
+                predictions.append(None)
+            else:
+                predictions.append(check_result.status.value == "fail")
+            labels.append(check_id in (result.expected_labels or []))
+        per_check[check_id] = _classification_metrics(predictions, labels)
+    return {
+        "labeled_samples": len(verdict_labeled),
+        "correct_verdicts": correct,
+        "verdict_accuracy": correct / len(verdict_labeled) if verdict_labeled else None,
+        "verdict_confusion": {key: dict(value) for key, value in confusion.items()},
+        "check_metrics": per_check,
+    }
+
+
 def report_summary(report: EvaluationReport) -> dict[str, Any]:
     verdicts = Counter(result.verdict.value for result in report.results)
     reasons = Counter(reason for result in report.results for reason in result.escalation_reasons)
@@ -54,6 +126,7 @@ def report_summary(report: EvaluationReport) -> dict[str, Any]:
         "output_tokens": sum(result.usage.output_tokens for result in report.results),
         "cost_usd": report.total_cost_usd,
         "latency_ms": sum(result.latency_ms for result in report.results),
+        **labeled_run_metrics(report),
     }
 
 
@@ -163,4 +236,15 @@ def compare_reports(before: EvaluationReport, after: EvaluationReport) -> dict[s
         ),
         "verdicts_before": a["verdicts"],
         "verdicts_after": b["verdicts"],
+        "labeled_samples_before": a["labeled_samples"],
+        "labeled_samples_after": b["labeled_samples"],
+        "verdict_accuracy_before": a["verdict_accuracy"],
+        "verdict_accuracy_after": b["verdict_accuracy"],
+        "verdict_accuracy_change": (
+            b["verdict_accuracy"] - a["verdict_accuracy"]
+            if a["verdict_accuracy"] is not None and b["verdict_accuracy"] is not None
+            else None
+        ),
+        "check_metrics_before": a["check_metrics"],
+        "check_metrics_after": b["check_metrics"],
     }

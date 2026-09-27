@@ -26,6 +26,9 @@ flowchart TB
 domain state lives under `data`. A check may declare `requires` fields and is
 skipped when evidence is missing rather than guessing.
 
+Human `labels` and `expected_verdict` are retained for local metrics and are
+excluded from provider state.
+
 ### Check boundary
 
 `CheckSpec` is provider-independent and versioned. Deterministic rules refer to

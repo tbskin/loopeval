@@ -10,11 +10,15 @@ SCENARIOS = [
         "id": "refund-window",
         "input": "How long do I have to request a refund?",
         "expected": "The refund window is 30 days.",
+        "labels": [],
+        "expected_verdict": "pass",
     },
     {
         "id": "unrelated-question",
         "input": "Can you help me change my shipping address?",
         "expected": "The assistant should say this request is outside its refund-policy scope.",
+        "labels": [],
+        "expected_verdict": "pass",
     },
 ]
 

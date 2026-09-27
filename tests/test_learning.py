@@ -7,6 +7,7 @@ import yaml
 
 from loopeval.config import PromotionPolicy
 from loopeval.learning import (
+    calibrate_noul_thresholds,
     candidate_key,
     fallback_schema,
     fenced_sample,
@@ -47,6 +48,21 @@ def test_validation_metrics_and_policy() -> None:
     )
     with pytest.raises(ValueError, match="counts differ"):
         validation_metrics([True], [])
+
+
+def test_noul_threshold_calibration() -> None:
+    recommendation = calibrate_noul_thresholds(
+        [0.95, 0.85, 0.2, 0.1, None],
+        [True, True, False, False, True],
+        minimum_precision=0.9,
+        minimum_coverage=0.8,
+    )
+    assert recommendation["meets_requirements"] is True
+    assert recommendation["metrics"]["precision"] == 1
+    assert recommendation["metrics"]["coverage"] >= 0.8
+    assert recommendation["pass_threshold"] < recommendation["failure_threshold"]
+    with pytest.raises(ValueError, match="counts differ"):
+        calibrate_noul_thresholds([0.5], [])
 
 
 def test_fenced_sample_is_bounded_and_randomly_delimited() -> None:

@@ -309,6 +309,8 @@ class Evaluator:
                 sample_id=sample.sample_id,
                 verdict=OverallVerdict.FAIL,
                 checks=check_results,
+                expected_verdict=sample.expected_verdict,
+                expected_labels=sample.labels,
                 latency_ms=round((time.perf_counter() - started) * 1000),
             )
             return sample_result
@@ -429,6 +431,8 @@ class Evaluator:
             sample_id=sample.sample_id,
             verdict=verdict,
             checks=check_results,
+            expected_verdict=sample.expected_verdict,
+            expected_labels=sample.labels,
             escalated=bool(reasons),
             escalation_reasons=reasons,
             fallback=fallback,

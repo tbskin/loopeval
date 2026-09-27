@@ -228,8 +228,12 @@ application outcome.
 | `trace` | Agent messages, tool calls, and tool results |
 | `metadata` | Dataset split, model name, experiment id, or tags |
 | `data` | Additional application-specific state |
-| `labels` | Human labels used for candidate validation |
+| `labels` | Human-labeled failure check ids used for validation and metrics |
 | `expected_verdict` | Human-labeled expected overall result |
+
+Omit `labels` and `expected_verdict` for an unlabeled sample. Use `labels: []`
+when a human reviewed the sample and confirmed that none of the labeled failure
+categories are present. Human labels are excluded from provider requests.
 
 ## Advanced manual checks
 
@@ -301,6 +305,24 @@ Promotion writes a regular active YAML check under `checks/learned/`. The next
 run sends it to Jev with the rest of the active library. See the
 [learning and promotion guide](docs/LEARNING_LOOP.md) for the full workflow.
 
+## Measure quality and calibrate thresholds
+
+When samples contain `expected_verdict`, run summaries report verdict accuracy
+and a confusion matrix. When they contain `labels`, summaries report precision,
+recall, F1, coverage, and accuracy for each check. `loopeval compare` shows
+quality, escalation, and cost changes together.
+
+Use human-labeled examples to recommend pass and failure thresholds for a Noul
+check:
+
+```bash
+loopeval calibrate grounding.unsupported_claim labeled.jsonl
+```
+
+Calibration prints a recommendation and its held-out metrics. It never rewrites
+the check automatically. See [calibration](docs/CALIBRATION.md) for dataset and
+split guidance.
+
 ## Storage, privacy, and cost
 
 LoopEval stores local state under `.loopeval/` by default:
@@ -353,6 +375,7 @@ Mocks demonstrate control flow only. They are not quality measurements.
 | `loopeval run` | Run the cascade and optionally enforce CI gates |
 | `loopeval report` | Read a stored summary or complete per-sample report |
 | `loopeval compare` | Compare verdicts, escalation rate, and cost across runs |
+| `loopeval calibrate` | Recommend Noul thresholds from human-labeled examples |
 | `loopeval candidates` | List candidate checks |
 | `loopeval candidate` | Inspect a candidate and its evidence |
 | `loopeval review` | Approve or reject a candidate |
@@ -381,6 +404,7 @@ privacy policies, and usage charges.
 - [Provider setup](docs/PROVIDERS.md)
 - [CI and exit codes](docs/CI.md)
 - [Learning and promotion](docs/LEARNING_LOOP.md)
+- [Calibration and labeled metrics](docs/CALIBRATION.md)
 - [Architecture and invariants](docs/ARCHITECTURE.md)
 - [Security policy and threat model](SECURITY.md)
 

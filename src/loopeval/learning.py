@@ -178,6 +178,61 @@ def validation_metrics(predictions: list[bool | None], labels: list[bool]) -> di
     }
 
 
+def calibrate_noul_thresholds(
+    scores: list[float | None],
+    labels: list[bool],
+    *,
+    minimum_precision: float = 0.9,
+    minimum_coverage: float = 0.8,
+) -> dict[str, Any]:
+    if len(scores) != len(labels):
+        raise ValueError("score and label counts differ")
+    if not scores:
+        raise ValueError("at least one labeled score is required")
+    if not 0 <= minimum_precision <= 1 or not 0 <= minimum_coverage <= 1:
+        raise ValueError("minimum precision and coverage must be between 0 and 1")
+
+    best: tuple[tuple[float, ...], float, float, dict[str, Any]] | None = None
+    for pass_step in range(0, 100):
+        pass_threshold = pass_step / 100
+        for failure_step in range(pass_step + 1, 101):
+            failure_threshold = failure_step / 100
+            predictions = [
+                None
+                if score is None or pass_threshold < score < failure_threshold
+                else bool(score is not None and score >= failure_threshold)
+                for score in scores
+            ]
+            metrics = validation_metrics(predictions, labels)
+            meets = (
+                metrics["precision"] >= minimum_precision
+                and metrics["coverage"] >= minimum_coverage
+            )
+            rank = (
+                float(meets),
+                metrics["f1"],
+                metrics["recall"],
+                metrics["coverage"],
+                metrics["accuracy"],
+                -(failure_threshold - pass_threshold),
+            )
+            if best is None or rank > best[0]:
+                best = (rank, pass_threshold, failure_threshold, metrics)
+    assert best is not None
+    _, pass_threshold, failure_threshold, metrics = best
+    return {
+        "pass_threshold": pass_threshold,
+        "failure_threshold": failure_threshold,
+        "minimum_precision": minimum_precision,
+        "minimum_coverage": minimum_coverage,
+        "meets_requirements": (
+            metrics["precision"] >= minimum_precision
+            and metrics["coverage"] >= minimum_coverage
+        ),
+        "metrics": metrics,
+    }
+
+
 def meets_promotion_policy(metrics: dict[str, Any], policy: PromotionPolicy) -> bool:
     return (
         int(metrics.get("examples", 0)) >= policy.minimum_examples

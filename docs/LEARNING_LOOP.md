@@ -60,7 +60,9 @@ Approval permits shadow evaluation; it does not activate the check.
 ## Held-out validation
 
 Each sample's `labels` list identifies failures present according to human
-review. Candidate validation computes:
+review. Every validation sample must include `labels`; use an empty list for a
+reviewed negative and omit the field only on unlabeled data. Candidate validation
+computes:
 
 - true/false positives and negatives;
 - precision and recall;

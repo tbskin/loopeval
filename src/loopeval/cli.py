@@ -15,12 +15,13 @@ from .checks import load_checks
 from .config import LoopEvalConfig, load_config
 from .io import load_samples
 from .learning import (
+    calibrate_noul_thresholds,
     ingest_candidate,
     meets_promotion_policy,
     promote_candidate,
     validation_metrics,
 )
-from .models import CandidateCheck, OverallVerdict, ResultStatus
+from .models import CandidateCheck, CheckKind, EvalSample, OverallVerdict, ResultStatus
 from .providers import build_generative_provider
 from .reporting import compare_reports, gate_failures, report_summary, write_junit_report
 from .storage import LocalStore
@@ -159,11 +160,15 @@ SAMPLES_TEMPLATE = [
         "input": "What is the refund window?",
         "output": "The refund window is 30 days.",
         "context": ["Customers may request a refund within 30 days of purchase."],
+        "labels": [],
+        "expected_verdict": "pass",
     },
     {
         "id": "offline-novel-example",
         "input": "Demonstrate the learning loop.",
         "output": "[NOVEL] This marker makes the offline mock propose a candidate check.",
+        "labels": ["learned.novel_pattern"],
+        "expected_verdict": "fail",
     },
 ]
 
@@ -450,6 +455,62 @@ def learn(
 
 
 @app.command()
+def calibrate(
+    check_id: Annotated[str, typer.Argument(help="Active Noul check id")],
+    dataset: Annotated[Path, typer.Argument(help="Labeled JSON or JSONL dataset")],
+    config_path: Annotated[Path, typer.Option("--config", "-c")] = Path("loopeval.yaml"),
+    minimum_precision: Annotated[
+        float, typer.Option("--minimum-precision", min=0, max=1)
+    ] = 0.9,
+    minimum_coverage: Annotated[
+        float, typer.Option("--minimum-coverage", min=0, max=1)
+    ] = 0.8,
+    output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
+) -> None:
+    """Recommend Noul thresholds from human-labeled examples."""
+    config = load_config(config_path)
+    matches = [check for check in load_checks(config.checks) if check.id == check_id]
+    if len(matches) != 1:
+        raise typer.BadParameter(f"expected one active check with id {check_id!r}")
+    check = matches[0]
+    if check.kind != CheckKind.NOUL:
+        raise typer.BadParameter("calibrate currently supports Noul checks only")
+    samples = load_samples(dataset)
+    if any(sample.labels is None for sample in samples):
+        raise typer.BadParameter(
+            "every calibration sample must include a labels field; use [] for a labeled negative"
+        )
+    loop = LoopEval(config)
+    try:
+        async def evaluate_all() -> list[float | None]:
+            semaphore = asyncio.Semaphore(config.budgets.concurrency)
+
+            async def evaluate_one(sample: EvalSample) -> float | None:
+                async with semaphore:
+                    result = await loop.evaluator.evaluate_sample(
+                        sample, checks=[check], enable_fallback=False, enable_coverage=False
+                    )
+                    return result.checks[0].score
+
+            return await asyncio.gather(*(evaluate_one(sample) for sample in samples))
+
+        scores = asyncio.run(evaluate_all())
+        recommendation = calibrate_noul_thresholds(
+            scores,
+            [check.id in (sample.labels or []) for sample in samples],
+            minimum_precision=minimum_precision,
+            minimum_coverage=minimum_coverage,
+        )
+        payload = json.dumps(recommendation, indent=2)
+        typer.echo(payload)
+        if output:
+            output.write_text(payload + "\n")
+            typer.echo(f"Wrote {output}", err=True)
+    finally:
+        loop.close()
+
+
+@app.command()
 def candidates(
     status: Annotated[str | None, typer.Option("--status")] = None,
     config_path: Annotated[Path, typer.Option("--config", "-c")] = Path("loopeval.yaml"),
@@ -547,7 +608,11 @@ def validate(
             return predictions
 
         predictions = asyncio.run(evaluate_all())
-        labels = [check.id in sample.labels for sample in samples]
+        if any(sample.labels is None for sample in samples):
+            raise typer.BadParameter(
+                "every validation sample must include a labels field; use [] for a labeled negative"
+            )
+        labels = [check.id in (sample.labels or []) for sample in samples]
         metrics = validation_metrics(predictions, labels)
         passed = meets_promotion_policy(metrics, config.promotion)
         loop.store.save_validation(candidate_id, metrics, passed)

@@ -12,9 +12,11 @@ from pydantic import ValidationError
 from loopeval.config import LoopEvalConfig, load_config
 from loopeval.io import load_samples
 from loopeval.models import (
+    CheckResult,
     EvaluationReport,
     OverallVerdict,
     ProviderUsage,
+    ResultStatus,
     SampleResult,
 )
 from loopeval.reporting import compare_reports, gate_failures, report_summary, write_junit_report
@@ -122,6 +124,9 @@ def report(run_id: str, escalated: bool, cost: float) -> EvaluationReport:
                 sample_id="one",
                 verdict=OverallVerdict.FAIL if escalated else OverallVerdict.PASS,
                 checks=[],
+                expected_verdict=(
+                    OverallVerdict.FAIL if escalated else OverallVerdict.PASS
+                ),
                 escalated=escalated,
                 escalation_reasons=["audit"] if escalated else [],
                 usage=ProviderUsage(cost_usd=cost),
@@ -136,12 +141,58 @@ def test_report_summary_and_comparison() -> None:
     summary = report_summary(before)
     assert summary["verdicts"] == {"fail": 1}
     assert summary["escalation_rate"] == 1.0
+    assert summary["verdict_accuracy"] == 1.0
     assert summary["failed_samples"] == [
         {"sample_id": "one", "failed_checks": [], "fallback_category": None}
     ]
     comparison = compare_reports(before, after)
     assert comparison["escalation_rate_change"] == -1.0
     assert comparison["cost_change"] == pytest.approx(-0.4)
+    assert comparison["verdict_accuracy_change"] == 0
+
+
+def test_labeled_run_check_metrics() -> None:
+    now = datetime.now(UTC)
+    value = EvaluationReport(
+        run_id="labeled",
+        started_at=now,
+        completed_at=now,
+        config_hash="abc",
+        results=[
+            SampleResult(
+                sample_id="positive",
+                verdict=OverallVerdict.FAIL,
+                expected_verdict=OverallVerdict.FAIL,
+                expected_labels=["quality.bad"],
+                checks=[
+                    CheckResult(
+                        check_id="quality.bad",
+                        check_version="1",
+                        status=ResultStatus.FAIL,
+                        severity="error",
+                    )
+                ],
+            ),
+            SampleResult(
+                sample_id="negative",
+                verdict=OverallVerdict.PASS,
+                expected_verdict=OverallVerdict.PASS,
+                expected_labels=[],
+                checks=[
+                    CheckResult(
+                        check_id="quality.bad",
+                        check_version="1",
+                        status=ResultStatus.PASS,
+                        severity="error",
+                    )
+                ],
+            ),
+        ],
+    )
+    summary = report_summary(value)
+    assert summary["labeled_samples"] == 2
+    assert summary["verdict_confusion"] == {"fail": {"fail": 1}, "pass": {"pass": 1}}
+    assert summary["check_metrics"]["quality.bad"]["f1"] == 1
 
 
 def test_evaluation_gates_and_junit_report(tmp_path: Path) -> None:

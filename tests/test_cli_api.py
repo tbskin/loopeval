@@ -206,6 +206,44 @@ def test_run_ci_gate_junit_and_detailed_report(tmp_path: Path) -> None:
     assert "accepts only" in invalid.output
 
 
+def test_calibrate_noul_check_from_labeled_samples(tmp_path: Path) -> None:
+    project = tmp_path / "demo"
+    assert runner.invoke(app, ["init", str(project), "--offline"]).exit_code == 0
+    dataset = project / "calibration.jsonl"
+    rows = [
+        {
+            "id": f"positive-{index}",
+            "input": "x",
+            "output": "[FAIL]",
+            "labels": ["quality.irrelevant"],
+        }
+        for index in range(5)
+    ] + [
+        {
+            "id": f"negative-{index}",
+            "input": "x",
+            "output": "healthy",
+            "labels": [],
+        }
+        for index in range(5)
+    ]
+    dataset.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    result = runner.invoke(
+        app,
+        [
+            "calibrate",
+            "quality.irrelevant",
+            str(dataset),
+            "-c",
+            str(project / "loopeval.yaml"),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    recommendation = json.loads(result.output)
+    assert recommendation["meets_requirements"] is True
+    assert recommendation["metrics"]["precision"] == 1
+
+
 def test_init_refuses_overwrite_and_version(tmp_path: Path) -> None:
     project = tmp_path / "demo"
     assert runner.invoke(app, ["init", str(project), "--offline"]).exit_code == 0
