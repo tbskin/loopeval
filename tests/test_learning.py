@@ -120,6 +120,8 @@ def test_promotion_requires_review_and_validation(tmp_path: Path) -> None:
     document = yaml.safe_load(target.read_text())
     assert document["lifecycle"] == "active"
     assert store.get_candidate(key)["status"] == "active"
+    with pytest.raises(ValueError, match="active candidates"):
+        store.revise_candidate(key, item.model_dump(mode="json"), None)
     store.close()
 
 

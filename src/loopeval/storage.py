@@ -334,6 +334,47 @@ class LocalStore:
                 (candidate_id, decision, notes, utcnow()),
             )
 
+    def revise_candidate(
+        self,
+        candidate_id: str,
+        check_json: dict[str, Any],
+        notes: str | None,
+    ) -> None:
+        row = self._connection.execute(
+            "SELECT check_id, status, check_json FROM candidates WHERE id=?", (candidate_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"candidate not found: {candidate_id}")
+        if row["status"] == "active":
+            raise ValueError("active candidates cannot be revised; change the versioned YAML check")
+        current = json.loads(row["check_json"])
+        if check_json.get("id") != row["check_id"]:
+            raise ValueError("a revision cannot change the candidate check id")
+        if check_json.get("kind") != current.get("kind"):
+            raise ValueError("a revision cannot change the candidate check kind")
+        now = utcnow()
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                UPDATE candidates
+                   SET status='proposed', title=?, description=?, check_json=?,
+                       validation_json=NULL, review_notes=?, updated_at=?
+                 WHERE id=?
+                """,
+                (
+                    check_json["name"],
+                    check_json.get("description"),
+                    json.dumps(check_json),
+                    notes,
+                    now,
+                    candidate_id,
+                ),
+            )
+            self._connection.execute(
+                "INSERT INTO reviews(candidate_id, decision, notes, created_at) VALUES (?, ?, ?, ?)",
+                (candidate_id, "revise", notes, now),
+            )
+
     def save_validation(self, candidate_id: str, metrics: dict[str, Any], passed: bool) -> None:
         status = "shadow" if passed else "approved"
         with self._lock, self._connection:

@@ -39,9 +39,9 @@ Escalated samples receive exactly one structured category:
 
 A novel response must include a complete candidate check. The candidate is
 validated as untrusted data and deduplicated by its stable proposed check id and
-kind. Wording may improve between sightings without splitting the candidate.
-Repeated observations increase `evidence_count` and retain per-sample evidence
-rather than creating issue spam.
+kind. The first valid proposal becomes the stable candidate definition. Repeated
+model observations increase `evidence_count` and retain per-sample evidence, but
+cannot silently rewrite the definition under review.
 
 ## Review
 
@@ -56,6 +56,18 @@ The reviewer should verify:
 7. positive and hard-negative examples exist.
 
 Approval permits shadow evaluation; it does not activate the check.
+
+If the proposed boundary or wording needs human refinement, export and revise it:
+
+```bash
+loopeval candidate cand_abc123 --export candidate.yaml
+# Edit candidate.yaml.
+loopeval revise cand_abc123 candidate.yaml --notes "Clarified the failure boundary."
+```
+
+A revision keeps accumulated evidence but resets the candidate to `proposed` and
+deletes its prior validation result. It must be reviewed and validated again.
+The check id and kind cannot change because they define candidate identity.
 
 ## Held-out validation
 

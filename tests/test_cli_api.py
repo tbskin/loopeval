@@ -160,6 +160,39 @@ def test_offline_bootstrap_creates_inactive_candidate(tmp_path: Path) -> None:
     listed = runner.invoke(app, ["candidates", "-c", str(project / "loopeval.yaml")])
     assert "quality.requirement_violation" in listed.output
 
+    with LoopEval.from_config(project / "loopeval.yaml") as loop:
+        candidate_id = loop.store.list_candidates()[0]["id"]
+    exported = project / "review" / "candidate.yaml"
+    shown = runner.invoke(
+        app,
+        [
+            "candidate",
+            candidate_id,
+            "--export",
+            str(exported),
+            "-c",
+            str(project / "loopeval.yaml"),
+        ],
+    )
+    assert shown.exit_code == 0, shown.output
+    edited = yaml.safe_load(exported.read_text())
+    edited["name"] = "Revised requirement violation"
+    exported.write_text(yaml.safe_dump(edited, sort_keys=False))
+    revised = runner.invoke(
+        app,
+        [
+            "revise",
+            candidate_id,
+            str(exported),
+            "--notes",
+            "Clarified during review.",
+            "-c",
+            str(project / "loopeval.yaml"),
+        ],
+    )
+    assert revised.exit_code == 0, revised.output
+    assert "review and validation are required again" in revised.output
+
 
 def test_run_ci_gate_junit_and_detailed_report(tmp_path: Path) -> None:
     project = tmp_path / "demo"

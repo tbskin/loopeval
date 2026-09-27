@@ -11,6 +11,7 @@ All notable changes follow Keep a Changelog and Semantic Versioning.
 - installable decision and generative provider entry points;
 - verified wheel builds and a trusted-publishing release workflow;
 - immutable candidate definitions with accumulating evidence;
+- explicit candidate export and human revision with review-state reset;
 - HTTP 529 retry handling and bounded `Retry-After` support.
 
 ## [0.1.0] - 2026-09-26

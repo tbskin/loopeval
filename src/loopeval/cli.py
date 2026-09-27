@@ -623,6 +623,10 @@ def candidates(
 def candidate(
     candidate_id: Annotated[str, typer.Argument()],
     config_path: Annotated[Path, typer.Option("--config", "-c")] = Path("loopeval.yaml"),
+    export_path: Annotated[
+        Path | None,
+        typer.Option("--export", help="Write the editable candidate check to YAML."),
+    ] = None,
 ) -> None:
     """Show a candidate check, validation, and the evidence behind it."""
     config = load_config(config_path)
@@ -633,6 +637,42 @@ def candidate(
             raise typer.BadParameter(f"candidate not found: {candidate_id}")
         row["evidence"] = store.list_candidate_evidence(candidate_id)
         typer.echo(json.dumps(row, indent=2, default=str))
+        if export_path:
+            export_path.parent.mkdir(parents=True, exist_ok=True)
+            export_path.write_text(yaml.safe_dump(row["check"], sort_keys=False))
+            typer.echo(f"Wrote {export_path}", err=True)
+    finally:
+        store.close()
+
+
+@app.command()
+def revise(
+    candidate_id: Annotated[str, typer.Argument()],
+    check_file: Annotated[Path, typer.Argument(help="Edited candidate YAML or JSON file")],
+    notes: Annotated[str | None, typer.Option("--notes")] = None,
+    config_path: Annotated[Path, typer.Option("--config", "-c")] = Path("loopeval.yaml"),
+) -> None:
+    """Replace a candidate definition and reset its review and validation state."""
+    document = yaml.safe_load(check_file.read_text())
+    if isinstance(document, dict) and isinstance(document.get("check"), dict):
+        document = document["check"]
+    try:
+        replacement = CandidateCheck.model_validate(document)
+        replacement.to_spec()
+    except Exception as exc:
+        raise typer.BadParameter(f"invalid candidate revision: {exc}") from exc
+    config = load_config(config_path)
+    store = _store(config)
+    try:
+        try:
+            store.revise_candidate(
+                candidate_id,
+                replacement.model_dump(mode="json"),
+                notes,
+            )
+        except (KeyError, ValueError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        typer.echo(f"Revised {candidate_id}; review and validation are required again.")
     finally:
         store.close()
 

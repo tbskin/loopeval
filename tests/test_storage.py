@@ -78,6 +78,16 @@ def test_candidate_dedup_review_and_errors(tmp_path: Path) -> None:
         store.review_candidate("missing", "approve", None)
     store.review_candidate("cand_x", "reject", "not reusable")
     assert store.get_candidate("cand_x")["status"] == "rejected"
+    revised = {**item, "name": "Human revised X"}
+    store.revise_candidate("cand_x", revised, "Clarified the boundary")
+    revised_row = store.get_candidate("cand_x")
+    assert revised_row["status"] == "proposed"
+    assert revised_row["title"] == "Human revised X"
+    assert revised_row["validation"] is None
+    with pytest.raises(ValueError, match="check id"):
+        store.revise_candidate("cand_x", {**revised, "id": "learned.other"}, None)
+    with pytest.raises(ValueError, match="check kind"):
+        store.revise_candidate("cand_x", {**revised, "kind": "choice"}, None)
     with pytest.raises(KeyError, match="not found"):
         store.save_validation("missing", {}, False)
     with pytest.raises(KeyError, match="not found"):

@@ -298,6 +298,9 @@ a separate guarded workflow:
 ```bash
 loopeval candidates --status proposed
 loopeval candidate cand_abc123
+# Optional: export and refine a proposal before approval.
+loopeval candidate cand_abc123 --export candidate.yaml
+loopeval revise cand_abc123 candidate.yaml
 
 loopeval review cand_abc123 \
   --decision approve \
@@ -392,6 +395,7 @@ Mocks demonstrate control flow only. They are not quality measurements.
 | `loopeval calibrate` | Recommend Noul thresholds from human-labeled examples |
 | `loopeval candidates` | List candidate checks |
 | `loopeval candidate` | Inspect a candidate and its evidence |
+| `loopeval revise` | Refine a candidate and reset review and validation |
 | `loopeval review` | Approve or reject a candidate |
 | `loopeval validate` | Evaluate an approved candidate on labeled holdout data |
 | `loopeval promote` | Add a validated candidate to the active library |
