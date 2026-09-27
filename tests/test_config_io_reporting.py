@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pytest
 import yaml
@@ -16,7 +17,7 @@ from loopeval.models import (
     ProviderUsage,
     SampleResult,
 )
-from loopeval.reporting import compare_reports, report_summary
+from loopeval.reporting import compare_reports, gate_failures, report_summary, write_junit_report
 
 
 def test_load_config_resolves_project_relative_paths(tmp_path: Path) -> None:
@@ -135,9 +136,33 @@ def test_report_summary_and_comparison() -> None:
     summary = report_summary(before)
     assert summary["verdicts"] == {"fail": 1}
     assert summary["escalation_rate"] == 1.0
+    assert summary["failed_samples"] == [
+        {"sample_id": "one", "failed_checks": [], "fallback_category": None}
+    ]
     comparison = compare_reports(before, after)
     assert comparison["escalation_rate_change"] == -1.0
     assert comparison["cost_change"] == pytest.approx(-0.4)
+
+
+def test_evaluation_gates_and_junit_report(tmp_path: Path) -> None:
+    value = report("failed", True, 0.5)
+    failures = gate_failures(
+        value,
+        fail_on={OverallVerdict.FAIL},
+        max_failures=0,
+        max_unresolved_rate=0,
+        max_cost_usd=0.1,
+    )
+    assert len(failures) == 3
+    junit = write_junit_report(value, tmp_path / "reports" / "loopeval.xml")
+    suite = ElementTree.parse(junit).getroot()
+    assert suite.attrib["tests"] == "1"
+    assert suite.attrib["failures"] == "1"
+    assert suite.find("testcase/failure") is not None
+
+    unknown_cost = report("unknown", False, 0)
+    unknown_cost.results[0].usage = ProviderUsage()
+    assert "cost is unknown" in gate_failures(unknown_cost, max_cost_usd=1)[0]
 
 
 def test_empty_report_properties() -> None:

@@ -20,9 +20,9 @@ from .learning import (
     promote_candidate,
     validation_metrics,
 )
-from .models import CandidateCheck, ResultStatus
+from .models import CandidateCheck, OverallVerdict, ResultStatus
 from .providers import build_generative_provider
-from .reporting import compare_reports, report_summary
+from .reporting import compare_reports, gate_failures, report_summary, write_junit_report
 from .storage import LocalStore
 
 app = typer.Typer(
@@ -329,8 +329,38 @@ def run_command(
     dataset: Annotated[Path, typer.Argument(help="JSON or JSONL dataset")],
     config_path: Annotated[Path, typer.Option("--config", "-c")] = Path("loopeval.yaml"),
     output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
+    junit: Annotated[Path | None, typer.Option("--junit", help="Write a JUnit XML report.")] = None,
+    fail_on: Annotated[
+        str,
+        typer.Option(
+            "--fail-on",
+            help="Comma-separated verdicts that fail the command: fail, unresolved.",
+        ),
+    ] = "",
+    max_failures: Annotated[
+        int | None, typer.Option("--max-failures", min=0, help="Maximum allowed failed samples.")
+    ] = None,
+    max_unresolved_rate: Annotated[
+        float | None,
+        typer.Option(
+            "--max-unresolved-rate", min=0, max=1, help="Maximum unresolved fraction."
+        ),
+    ] = None,
+    max_cost_usd: Annotated[
+        float | None, typer.Option("--max-cost-usd", min=0, help="Maximum reported run cost.")
+    ] = None,
 ) -> None:
     """Run the full deterministic → decision → fallback cascade."""
+    requested_verdicts: set[OverallVerdict] = set()
+    for raw in filter(None, (item.strip() for item in fail_on.split(","))):
+        try:
+            requested_verdicts.add(OverallVerdict(raw))
+        except ValueError as exc:
+            raise typer.BadParameter(
+                "--fail-on accepts only 'fail' and 'unresolved'"
+            ) from exc
+    if OverallVerdict.PASS in requested_verdicts:
+        raise typer.BadParameter("--fail-on accepts only 'fail' and 'unresolved'")
     samples = load_samples(dataset)
     with LoopEval.from_config(config_path) as loop:
         report = loop.run(samples)
@@ -339,6 +369,20 @@ def run_command(
         if output:
             output.write_text(report.model_dump_json(indent=2) + "\n")
             typer.echo(f"Wrote {output}")
+        if junit:
+            write_junit_report(report, junit)
+            typer.echo(f"Wrote {junit}", err=True)
+        failures = gate_failures(
+            report,
+            fail_on=requested_verdicts,
+            max_failures=max_failures,
+            max_unresolved_rate=max_unresolved_rate,
+            max_cost_usd=max_cost_usd,
+        )
+        if failures:
+            for reason in failures:
+                typer.echo(f"Evaluation gate failed: {reason}", err=True)
+            raise typer.Exit(code=3)
 
 
 @app.command()
@@ -543,6 +587,9 @@ def promote(
 def report(
     run_id: Annotated[str, typer.Argument()],
     config_path: Annotated[Path, typer.Option("--config", "-c")] = Path("loopeval.yaml"),
+    details: Annotated[
+        bool, typer.Option("--details", help="Print the complete per-sample report.")
+    ] = False,
 ) -> None:
     """Print the durable summary for a completed run."""
     config = load_config(config_path)
@@ -551,7 +598,8 @@ def report(
         value = store.get_report(run_id)
         if value is None:
             raise typer.BadParameter(f"run not found or incomplete: {run_id}")
-        typer.echo(json.dumps(report_summary(value), indent=2, default=str))
+        payload = value.model_dump(mode="json") if details else report_summary(value)
+        typer.echo(json.dumps(payload, indent=2, default=str))
     finally:
         store.close()
 

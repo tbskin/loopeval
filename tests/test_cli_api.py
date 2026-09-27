@@ -155,6 +155,57 @@ def test_offline_bootstrap_creates_inactive_candidate(tmp_path: Path) -> None:
     assert "quality.requirement_violation" in listed.output
 
 
+def test_run_ci_gate_junit_and_detailed_report(tmp_path: Path) -> None:
+    project = tmp_path / "demo"
+    assert runner.invoke(app, ["init", str(project), "--offline"]).exit_code == 0
+    junit = project / "reports" / "loopeval.xml"
+    run = runner.invoke(
+        app,
+        [
+            "run",
+            str(project / "samples.jsonl"),
+            "-c",
+            str(project / "loopeval.yaml"),
+            "--fail-on",
+            "fail,unresolved",
+            "--junit",
+            str(junit),
+        ],
+    )
+    assert run.exit_code == 3, run.output
+    assert "Evaluation gate failed" in run.output
+    assert junit.exists()
+    summary = json.loads(run.stdout)
+    assert summary["failed_samples"][0]["sample_id"] == "offline-novel-example"
+
+    details = runner.invoke(
+        app,
+        [
+            "report",
+            summary["run_id"],
+            "-c",
+            str(project / "loopeval.yaml"),
+            "--details",
+        ],
+    )
+    assert details.exit_code == 0, details.output
+    assert len(json.loads(details.output)["results"]) == 2
+
+    invalid = runner.invoke(
+        app,
+        [
+            "run",
+            str(project / "samples.jsonl"),
+            "-c",
+            str(project / "loopeval.yaml"),
+            "--fail-on",
+            "pass",
+        ],
+    )
+    assert invalid.exit_code != 0
+    assert "accepts only" in invalid.output
+
+
 def test_init_refuses_overwrite_and_version(tmp_path: Path) -> None:
     project = tmp_path / "demo"
     assert runner.invoke(app, ["init", str(project), "--offline"]).exit_code == 0

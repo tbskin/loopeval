@@ -52,7 +52,9 @@ Please do the following:
     for facts that code can calculate exactly. Keep semantic checks narrow and
     limited to questions that require understanding language.
 12. Add a project-native test or CI command that runs the evaluation suite only
-   if doing so is deterministic and does not require a secret in pull requests.
+    if doing so is deterministic and does not require a secret in pull requests.
+    Use `--fail-on fail,unresolved` for a fail-closed trusted workflow and emit a
+    JUnit report when the application's CI can display one.
 13. Run the application's existing tests plus the new evaluation smoke test.
 14. Summarize:
     - files created or changed

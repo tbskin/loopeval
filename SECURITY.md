@@ -42,3 +42,7 @@ to sample ids. It does not copy the source dataset into run reports, but quoted
 evidence may still contain sensitive text. Protect it and do not commit it.
 SQLite uses WAL mode for resilience; WAL and shared-memory files inherit the
 directory's OS permissions.
+
+JUnit reports include per-sample check results, escalation reasons, and fallback
+evidence. Apply the same access controls and retention policy used for
+`.loopeval/` artifacts.

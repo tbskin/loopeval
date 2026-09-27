@@ -152,6 +152,21 @@ Then run:
 loopeval run scenarios.jsonl
 ```
 
+For CI, choose which outcomes should fail the command:
+
+```bash
+loopeval run scenarios.jsonl \
+  --fail-on fail,unresolved \
+  --max-unresolved-rate 0.05 \
+  --max-cost-usd 1.00 \
+  --junit reports/loopeval.xml
+```
+
+The command completes and stores the report before applying CI gates. Exit code
+`3` means the evaluation ran successfully but a configured gate failed. Use
+`loopeval report RUN_ID --details` to inspect every sample. See the
+[CI guide](docs/CI.md) for stable exit codes and secret-safe workflows.
+
 The [refund assistant example](examples/refund_assistant) contains a complete
 application, scenario-capture script, requirements file, checks, and provider
 configuration.
@@ -335,8 +350,8 @@ Mocks demonstrate control flow only. They are not quality measurements.
 | `loopeval init` | Create provider configuration, starter checks, and sample data |
 | `loopeval doctor` | Validate configuration, checks, directories, and credentials |
 | `loopeval bootstrap` | Propose initial checks from requirements and scenarios |
-| `loopeval run` | Run the exact, Jev, and optional LLM cascade |
-| `loopeval report` | Read a stored run report |
+| `loopeval run` | Run the cascade and optionally enforce CI gates |
+| `loopeval report` | Read a stored summary or complete per-sample report |
 | `loopeval compare` | Compare verdicts, escalation rate, and cost across runs |
 | `loopeval candidates` | List candidate checks |
 | `loopeval candidate` | Inspect a candidate and its evidence |
@@ -364,6 +379,7 @@ privacy policies, and usage charges.
 ## More documentation
 
 - [Provider setup](docs/PROVIDERS.md)
+- [CI and exit codes](docs/CI.md)
 - [Learning and promotion](docs/LEARNING_LOOP.md)
 - [Architecture and invariants](docs/ARCHITECTURE.md)
 - [Security policy and threat model](SECURITY.md)
