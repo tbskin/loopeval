@@ -62,7 +62,7 @@ class MockDecisionProvider(DecisionProvider):
             answers=answers,
             provider=self.name,
             model=self.model,
-            usage=ProviderUsage(),
+            usage=ProviderUsage(cost_usd=0.0),
             latency_ms=round((time.perf_counter() - started) * 1000),
         )
 
@@ -82,7 +82,7 @@ class MockGenerativeProvider(GenerativeProvider):
         schema_name: str,
     ) -> tuple[dict[str, Any], ProviderUsage, int]:
         if schema_name == "loopeval_doctor":
-            return {"ok": True}, ProviderUsage(), 0
+            return {"ok": True}, ProviderUsage(cost_usd=0.0), 0
         if schema_name == "loopeval_bootstrap":
             return (
                 {
@@ -107,11 +107,11 @@ class MockGenerativeProvider(GenerativeProvider):
                         }
                     ],
                 },
-                ProviderUsage(),
+                ProviderUsage(cost_usd=0.0),
                 0,
             )
         if self.responses.get("verdict"):
-            return dict(self.responses["verdict"]), ProviderUsage(), 0
+            return dict(self.responses["verdict"]), ProviderUsage(cost_usd=0.0), 0
         if "[NOVEL]" in user:
             return (
                 {
@@ -136,7 +136,7 @@ class MockGenerativeProvider(GenerativeProvider):
                         "severity": "error",
                     },
                 },
-                ProviderUsage(),
+                ProviderUsage(cost_usd=0.0),
                 0,
             )
         return (
@@ -151,6 +151,6 @@ class MockGenerativeProvider(GenerativeProvider):
                 "confidence": 0.9,
                 "candidate_check": None,
             },
-            ProviderUsage(),
+            ProviderUsage(cost_usd=0.0),
             0,
         )

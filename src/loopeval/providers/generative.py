@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from typing import Any
 
-import httpx
-
 from ..config import ProviderConfig
 from ..models import ProviderUsage
 from .base import GenerativeProvider, MissingCredentialError, ProviderError
-from .http import RETRYABLE_STATUS_CODES, retry_delay
+from .http import post_json
+from .schema import decode_response, provider_schema
+from .usage import parse_usage
 
 
 def parse_json_object(content: Any) -> dict[str, Any]:
@@ -46,7 +45,7 @@ class OpenAICompatibleProvider(GenerativeProvider):
         self.model = config.model
         self.name = config.type
         self.api_key = config.api_key
-        if not self.api_key and config.type != "openai_compatible":
+        if not self.api_key and (config.type != "openai_compatible" or config.api_key_env):
             raise MissingCredentialError(
                 f"{config.type} requires environment variable {config.api_key_env!r}"
             )
@@ -60,15 +59,7 @@ class OpenAICompatibleProvider(GenerativeProvider):
         self.url = f"{base.rstrip('/')}/chat/completions"
 
     def _usage(self, raw: dict[str, Any]) -> ProviderUsage:
-        usage = raw.get("usage") or {}
-        input_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
-        output_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
-        cost = usage.get("cost") or usage.get("cost_usd")
-        if cost is None and self.config.input_cost_per_million is not None:
-            cost = input_tokens * self.config.input_cost_per_million / 1_000_000
-            if self.config.output_cost_per_million is not None:
-                cost += output_tokens * self.config.output_cost_per_million / 1_000_000
-        return ProviderUsage(input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=cost)
+        return parse_usage(raw, self.config)
 
     @staticmethod
     def _parse(content: Any) -> dict[str, Any]:
@@ -88,12 +79,17 @@ class OpenAICompatibleProvider(GenerativeProvider):
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "temperature": 0,
         }
+        token_field = "max_completion_tokens" if self.config.type == "openai" else "max_tokens"
+        body[token_field] = self.config.max_output_tokens
+        if self.config.type == "openai":
+            body["store"] = False
         if self.config.structured_output:
             body["response_format"] = {
                 "type": "json_schema",
-                "json_schema": {"name": schema_name, "strict": True, "schema": schema},
+                "json_schema": {
+                    "name": schema_name, "strict": True, "schema": provider_schema(schema)
+                },
             }
         else:
             body["messages"][0]["content"] += (
@@ -106,30 +102,19 @@ class OpenAICompatibleProvider(GenerativeProvider):
             headers["X-Title"] = "LoopEval"
 
         started = time.perf_counter()
-        last_error: Exception | None = None
-        raw: dict[str, Any] | None = None
-        async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
-            for attempt in range(self.config.max_retries + 1):
-                response: httpx.Response | None = None
-                try:
-                    response = await client.post(self.url, headers=headers, json=body)
-                    if response.status_code == 200:
-                        raw = response.json()
-                        break
-                    if response.status_code not in RETRYABLE_STATUS_CODES:
-                        raise ProviderError(
-                            f"{self.name} returned {response.status_code}: {response.text[:500]}"
-                        )
-                    last_error = ProviderError(f"retryable status {response.status_code}")
-                except (httpx.TimeoutException, httpx.TransportError) as exc:
-                    last_error = exc
-                if attempt < self.config.max_retries:
-                    await asyncio.sleep(retry_delay(response, attempt))
-        if raw is None:
-            raise ProviderError(f"{self.name} generative request failed: {last_error}")
+        raw = await post_json(self.config, self.url, headers, body)
         try:
-            content = raw["choices"][0]["message"]["content"]
+            choice = raw["choices"][0]
+            message = choice["message"]
+            content = message["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise ProviderError("generative response did not contain message content") from exc
+        if choice.get("finish_reason") not in {None, "stop"}:
+            raise ProviderError("generative response did not finish normally")
+        if message.get("refusal"):
+            raise ProviderError("generative response contained a refusal")
         latency_ms = round((time.perf_counter() - started) * 1000)
-        return self._parse(content), self._usage(raw), latency_ms
+        parsed = self._parse(content)
+        if self.config.structured_output:
+            parsed = decode_response(parsed, schema)
+        return parsed, self._usage(raw), latency_ms

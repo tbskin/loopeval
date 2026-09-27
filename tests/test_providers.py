@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 from typing import Any, ClassVar
 
 import httpx
 import pytest
 
 from loopeval.config import ProviderConfig
-from loopeval.models import QuestionKind, TypedQuestion
+from loopeval.models import CandidateCheck, FallbackVerdict, QuestionKind, TypedQuestion
 from loopeval.providers import build_decision_provider, build_generative_provider
 from loopeval.providers.anthropic import AnthropicProvider
 from loopeval.providers.base import MissingCredentialError, ProviderError
@@ -14,6 +15,106 @@ from loopeval.providers.decision import HTTPDecisionProvider
 from loopeval.providers.generative import OpenAICompatibleProvider
 from loopeval.providers.mock import MockDecisionProvider, MockGenerativeProvider
 from loopeval.providers.openai_responses import OpenAIResponsesProvider
+from loopeval.providers.usage import parse_usage
+
+SIMPLE_SCHEMA = {
+    "type": "object",
+    "properties": {"ok": {"type": "boolean"}},
+    "required": ["ok"],
+    "additionalProperties": False,
+}
+
+
+@pytest.mark.parametrize(
+    "usage, expected",
+    [
+        ({"cost": 0, "cost_usd": 12}, 0),
+        ({"input_tokens": 10}, None),
+        ({"input_tokens": 10, "output_tokens": 2}, 0.000014),
+    ],
+)
+def test_cost_accounting_preserves_zero_and_requires_complete_usage(usage, expected) -> None:
+    config = ProviderConfig(type="mock", input_cost_per_million=1, output_cost_per_million=2)
+    actual = parse_usage({"usage": usage}, config).cost_usd
+    assert actual == (pytest.approx(expected) if expected is not None else None)
+
+
+@pytest.mark.parametrize(
+    "usage", [{"cost": -1}, {"cost": float("nan")}, {"input_tokens": -1}, {"output_tokens": True}]
+)
+def test_invalid_usage_is_not_silently_counted(usage) -> None:
+    with pytest.raises(ProviderError):
+        parse_usage({"usage": usage}, ProviderConfig(type="mock"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["openai", "openrouter", "anthropic", "openai_responses"])
+async def test_full_candidate_schema_through_each_native_transport(kind, monkeypatch) -> None:
+    monkeypatch.setenv("TEST_KEY", "secret")
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+    candidate = CandidateCheck(
+        id="quality.bad",
+        name="Bad",
+        description="Defect",
+        kind="noul",
+        instructions="Is it bad?",
+        criteria={"true": "bad", "false": "good"},
+    )
+    verdict = FallbackVerdict(
+        category="novel_failure",
+        evidence="Observed defect",
+        confidence=0.9,
+        candidate_check=candidate,
+    )
+    wire = verdict.model_dump(mode="json")
+    wire["candidate_check"]["criteria"] = json.dumps(candidate.criteria)
+    wire["candidate_check"]["params"] = "{}"
+    content = json.dumps(wire)
+    if kind == "anthropic":
+        payload = {"content": [{"type": "text", "text": content}], "stop_reason": "end_turn"}
+    elif kind == "openai_responses":
+        payload = {
+            "status": "completed",
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": content}]}],
+        }
+    else:
+        payload = {"choices": [{"message": {"content": content}, "finish_reason": "stop"}]}
+    FakeAsyncClient.responses = [response(200, payload)]
+    provider = build_generative_provider(
+        ProviderConfig(type=kind, model="test", api_key_env="TEST_KEY")
+    )
+    parsed, _, _ = await provider.generate_structured(
+        system="Evaluate",
+        user="Sample",
+        schema=FallbackVerdict.model_json_schema(),
+        schema_name="verdict",
+    )
+    assert FallbackVerdict.model_validate(parsed) == verdict
+    body = FakeAsyncClient.requests[0][2]
+    if kind in {"openai", "openai_responses"}:
+        assert body["store"] is False
+
+
+@pytest.mark.asyncio
+async def test_provider_errors_never_echo_response_body(monkeypatch) -> None:
+    monkeypatch.setenv("TEST_KEY", "secret")
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+    FakeAsyncClient.responses = [response(400, {"error": "secret private sample"})]
+    provider = OpenAICompatibleProvider(
+        ProviderConfig(
+            type="openai",
+            model="test",
+            api_key_env="TEST_KEY",
+            max_retries=0,
+        )
+    )
+    with pytest.raises(ProviderError) as caught:
+        await provider.generate_structured(
+            system="x", user="x", schema=SIMPLE_SCHEMA, schema_name="test"
+        )
+    assert "400" in str(caught.value)
+    assert "secret" not in str(caught.value)
+    assert "private sample" not in str(caught.value)
 
 
 class FakeAsyncClient:
@@ -141,7 +242,7 @@ async def test_decision_provider_retries_typesafe_overload_and_honors_retry_afte
     async def capture_sleep(delay: float) -> None:
         delays.append(delay)
 
-    monkeypatch.setattr("loopeval.providers.decision.asyncio.sleep", capture_sleep)
+    monkeypatch.setattr("loopeval.providers.http.asyncio.sleep", capture_sleep)
     FakeAsyncClient.responses = [
         response(529, {"error": "overloaded"}, headers={"Retry-After": "1.5"}),
         response(
@@ -157,9 +258,7 @@ async def test_decision_provider_retries_typesafe_overload_and_honors_retry_afte
             max_retries=1,
         )
     )
-    result = await provider.decide(
-        {}, [TypedQuestion(id="x", kind="noul", instructions="Is X?")]
-    )
+    result = await provider.decide({}, [TypedQuestion(id="x", kind="noul", instructions="Is X?")])
     assert result.answers["x"].noul == 0.1
     assert delays == [1.5]
 
@@ -254,7 +353,7 @@ async def test_anthropic_provider_uses_native_structured_outputs(
     parsed, usage, _ = await provider.generate_structured(
         system="system",
         user="user",
-        schema={"type": "object"},
+        schema=SIMPLE_SCHEMA,
         schema_name="answer",
     )
     assert parsed == {"ok": True}
@@ -263,7 +362,7 @@ async def test_anthropic_provider_uses_native_structured_outputs(
     assert url == "https://api.anthropic.com/v1/messages"
     assert headers["x-api-key"] == "anthropic-secret"
     assert headers["anthropic-version"] == "2023-06-01"
-    assert body["output_config"]["format"]["schema"] == {"type": "object"}
+    assert body["output_config"]["format"]["schema"] == SIMPLE_SCHEMA
 
 
 @pytest.mark.asyncio
@@ -293,7 +392,7 @@ async def test_anthropic_provider_rejects_truncated_structured_output(
         await provider.generate_structured(
             system="system",
             user="user",
-            schema={"type": "object"},
+            schema=SIMPLE_SCHEMA,
             schema_name="answer",
         )
 
@@ -329,7 +428,7 @@ async def test_openai_responses_provider_uses_native_structured_outputs(
     parsed, usage, _ = await provider.generate_structured(
         system="system",
         user="user",
-        schema={"type": "object"},
+        schema=SIMPLE_SCHEMA,
         schema_name="answer",
     )
     assert parsed == {"ok": True}
@@ -341,8 +440,9 @@ async def test_openai_responses_provider_uses_native_structured_outputs(
         "type": "json_schema",
         "name": "answer",
         "strict": True,
-        "schema": {"type": "object"},
+        "schema": SIMPLE_SCHEMA,
     }
+    assert body["store"] is False
 
 
 def test_direct_generative_provider_factories(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -382,9 +482,7 @@ def test_provider_plugins_load_from_role_specific_entry_points(
 
 
 def test_provider_plugin_reports_missing_registration(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "loopeval.providers.plugins.entry_points", lambda **kwargs: []
-    )
+    monkeypatch.setattr("loopeval.providers.plugins.entry_points", lambda **kwargs: [])
     config = ProviderConfig(type="plugin", plugin="missing")
     with pytest.raises(ProviderError, match="is not installed"):
         build_generative_provider(config)
