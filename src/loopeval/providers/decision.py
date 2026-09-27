@@ -15,6 +15,7 @@ from ..models import (
     TypedQuestion,
 )
 from .base import DecisionProvider, MissingCredentialError, ProviderError
+from .http import RETRYABLE_STATUS_CODES, retry_delay
 
 
 class HTTPDecisionProvider(DecisionProvider):
@@ -84,12 +85,13 @@ class HTTPDecisionProvider(DecisionProvider):
         raw: dict[str, Any] | None = None
         async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
             for attempt in range(self.config.max_retries + 1):
+                response: httpx.Response | None = None
                 try:
                     response = await client.post(self.url, headers=headers, json=payload)
                     if response.status_code == 200:
                         raw = response.json()
                         break
-                    if response.status_code not in {429, 500, 502, 503, 504}:
+                    if response.status_code not in RETRYABLE_STATUS_CODES:
                         raise ProviderError(
                             f"{self.name} returned {response.status_code}: {response.text[:500]}"
                         )
@@ -99,7 +101,7 @@ class HTTPDecisionProvider(DecisionProvider):
                 except (httpx.TimeoutException, httpx.TransportError) as exc:
                     last_error = exc
                 if attempt < self.config.max_retries:
-                    await asyncio.sleep(min(0.25 * (2**attempt), 2.0))
+                    await asyncio.sleep(retry_delay(response, attempt))
         if raw is None:
             raise ProviderError(f"{self.name} decision request failed: {last_error}")
 

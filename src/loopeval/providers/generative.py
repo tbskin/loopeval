@@ -10,6 +10,34 @@ import httpx
 from ..config import ProviderConfig
 from ..models import ProviderUsage
 from .base import GenerativeProvider, MissingCredentialError, ProviderError
+from .http import RETRYABLE_STATUS_CODES, retry_delay
+
+
+def parse_json_object(content: Any) -> dict[str, Any]:
+    if isinstance(content, dict):
+        return content
+    if not isinstance(content, str):
+        raise ProviderError("generative provider returned non-text content")
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        decoder = json.JSONDecoder()
+        parsed = None
+        for offset, character in enumerate(content):
+            if character != "{":
+                continue
+            try:
+                candidate, _ = decoder.raw_decode(content[offset:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidate, dict):
+                parsed = candidate
+                break
+        if parsed is None:
+            raise ProviderError("generative provider returned no JSON object") from None
+    if not isinstance(parsed, dict):
+        raise ProviderError("structured response must be a JSON object")
+    return parsed
 
 
 class OpenAICompatibleProvider(GenerativeProvider):
@@ -44,30 +72,7 @@ class OpenAICompatibleProvider(GenerativeProvider):
 
     @staticmethod
     def _parse(content: Any) -> dict[str, Any]:
-        if isinstance(content, dict):
-            return content
-        if not isinstance(content, str):
-            raise ProviderError("generative provider returned non-text content")
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError:
-            decoder = json.JSONDecoder()
-            parsed = None
-            for offset, character in enumerate(content):
-                if character != "{":
-                    continue
-                try:
-                    candidate, _ = decoder.raw_decode(content[offset:])
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(candidate, dict):
-                    parsed = candidate
-                    break
-            if parsed is None:
-                raise ProviderError("generative provider returned no JSON object") from None
-        if not isinstance(parsed, dict):
-            raise ProviderError("structured response must be a JSON object")
-        return parsed
+        return parse_json_object(content)
 
     async def generate_structured(
         self,
@@ -105,12 +110,13 @@ class OpenAICompatibleProvider(GenerativeProvider):
         raw: dict[str, Any] | None = None
         async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
             for attempt in range(self.config.max_retries + 1):
+                response: httpx.Response | None = None
                 try:
                     response = await client.post(self.url, headers=headers, json=body)
                     if response.status_code == 200:
                         raw = response.json()
                         break
-                    if response.status_code not in {429, 500, 502, 503, 504}:
+                    if response.status_code not in RETRYABLE_STATUS_CODES:
                         raise ProviderError(
                             f"{self.name} returned {response.status_code}: {response.text[:500]}"
                         )
@@ -118,7 +124,7 @@ class OpenAICompatibleProvider(GenerativeProvider):
                 except (httpx.TimeoutException, httpx.TransportError) as exc:
                     last_error = exc
                 if attempt < self.config.max_retries:
-                    await asyncio.sleep(min(0.25 * (2**attempt), 2.0))
+                    await asyncio.sleep(retry_delay(response, attempt))
         if raw is None:
             raise ProviderError(f"{self.name} generative request failed: {last_error}")
         try:

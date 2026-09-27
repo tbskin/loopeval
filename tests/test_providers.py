@@ -33,9 +33,14 @@ class FakeAsyncClient:
         return self.responses.pop(0)
 
 
-def response(status: int, payload: dict[str, Any] | None = None) -> httpx.Response:
+def response(
+    status: int,
+    payload: dict[str, Any] | None = None,
+    *,
+    headers: dict[str, str] | None = None,
+) -> httpx.Response:
     request = httpx.Request("POST", "https://example.test")
-    return httpx.Response(status, json=payload or {}, request=request)
+    return httpx.Response(status, json=payload or {}, headers=headers, request=request)
 
 
 @pytest.fixture(autouse=True)
@@ -120,6 +125,40 @@ async def test_decision_provider_errors_and_retries(monkeypatch: pytest.MonkeyPa
     FakeAsyncClient.responses = [response(200, {"answers": {}, "usage": {}})]
     with pytest.raises(ProviderError, match="omitted answer"):
         await provider.decide({}, [TypedQuestion(id="x", kind="noul", instructions="Is X?")])
+
+
+@pytest.mark.asyncio
+async def test_decision_provider_retries_typesafe_overload_and_honors_retry_after(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TEST_KEY", "secret")
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+    delays: list[float] = []
+
+    async def capture_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("loopeval.providers.decision.asyncio.sleep", capture_sleep)
+    FakeAsyncClient.responses = [
+        response(529, {"error": "overloaded"}, headers={"Retry-After": "1.5"}),
+        response(
+            200,
+            {"answers": {"x": {"type": "noul", "noul": 0.1}}, "usage": {}},
+        ),
+    ]
+    provider = HTTPDecisionProvider(
+        ProviderConfig(
+            type="typesafe",
+            model="jev-1.13.0",
+            api_key_env="TEST_KEY",
+            max_retries=1,
+        )
+    )
+    result = await provider.decide(
+        {}, [TypedQuestion(id="x", kind="noul", instructions="Is X?")]
+    )
+    assert result.answers["x"].noul == 0.1
+    assert delays == [1.5]
 
 
 @pytest.mark.asyncio
