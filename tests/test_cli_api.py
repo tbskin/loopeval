@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -347,9 +348,14 @@ def test_init_openai_compatible_and_invalid_provider(tmp_path: Path) -> None:
     assert config["providers"]["fallback"]["type"] == "openai_compatible"
     assert config["providers"]["fallback"]["api_key_env"] is None
 
-    invalid = runner.invoke(app, ["init", str(tmp_path / "bad"), "--decision", "unknown"])
+    invalid = runner.invoke(
+        app,
+        ["init", str(tmp_path / "bad"), "--decision", "unknown"],
+        color=False,
+    )
     assert invalid.exit_code != 0
-    assert "--decision must be one of" in invalid.output
+    plain_output = re.sub(r"\x1b\[[0-9;]*m", "", invalid.output)
+    assert "--decision must be one of" in plain_output
 
 
 def test_init_selects_anthropic_and_openai_responses_fallbacks(tmp_path: Path) -> None:
