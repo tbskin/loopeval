@@ -5,39 +5,8 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
+from .learning import validation_metrics
 from .models import EvaluationReport, OverallVerdict
-
-
-def _classification_metrics(predictions: list[bool | None], labels: list[bool]) -> dict[str, Any]:
-    tp = fp = tn = fn = unresolved = 0
-    for predicted, actual in zip(predictions, labels, strict=True):
-        if predicted is None:
-            unresolved += 1
-        elif predicted and actual:
-            tp += 1
-        elif predicted and not actual:
-            fp += 1
-        elif not predicted and actual:
-            fn += 1
-        else:
-            tn += 1
-    precision = tp / (tp + fp) if tp + fp else 0.0
-    recall = tp / (tp + fn) if tp + fn else 0.0
-    resolved = tp + fp + tn + fn
-    return {
-        "examples": len(labels),
-        "resolved": resolved,
-        "unresolved": unresolved,
-        "coverage": resolved / len(labels) if labels else 0.0,
-        "true_positive": tp,
-        "false_positive": fp,
-        "true_negative": tn,
-        "false_negative": fn,
-        "precision": precision,
-        "recall": recall,
-        "f1": 2 * precision * recall / (precision + recall) if precision + recall else 0.0,
-        "accuracy": (tp + tn) / resolved if resolved else 0.0,
-    }
 
 
 def labeled_run_metrics(report: EvaluationReport) -> dict[str, Any]:
@@ -70,7 +39,7 @@ def labeled_run_metrics(report: EvaluationReport) -> dict[str, Any]:
             else:
                 predictions.append(check_result.status.value == "fail")
             labels.append(check_id in (result.expected_labels or []))
-        per_check[check_id] = _classification_metrics(predictions, labels)
+        per_check[check_id] = validation_metrics(predictions, labels)
     return {
         "labeled_samples": len(verdict_labeled),
         "correct_verdicts": correct,
@@ -114,6 +83,8 @@ def report_summary(report: EvaluationReport) -> dict[str, Any]:
             )
     return {
         "run_id": report.run_id,
+        "dataset_hash": report.dataset_hash,
+        "checks_hash": report.checks_hash,
         "samples": report.sample_count,
         "verdicts": dict(verdicts),
         "escalated": sum(result.escalated for result in report.results),
@@ -125,7 +96,8 @@ def report_summary(report: EvaluationReport) -> dict[str, Any]:
         "input_tokens": sum(result.usage.input_tokens for result in report.results),
         "output_tokens": sum(result.usage.output_tokens for result in report.results),
         "cost_usd": report.total_cost_usd,
-        "latency_ms": sum(result.latency_ms for result in report.results),
+        "latency_ms": max(0, round((report.completed_at - report.started_at).total_seconds() * 1000)),
+        "sample_latency_total_ms": sum(result.latency_ms for result in report.results),
         **labeled_run_metrics(report),
     }
 
@@ -218,11 +190,22 @@ def write_junit_report(report: EvaluationReport, path: str | Path) -> Path:
 
 
 def compare_reports(before: EvaluationReport, after: EvaluationReport) -> dict[str, Any]:
+    if sorted(result.sample_id for result in before.results) != sorted(
+        result.sample_id for result in after.results
+    ):
+        raise ValueError("runs contain different sample ids; rerun the same frozen dataset")
+    verified_dataset = before.dataset_hash is not None and after.dataset_hash is not None
+    if verified_dataset and before.dataset_hash != after.dataset_hash:
+        raise ValueError("runs contain different sample content or labels; rerun the same frozen dataset")
     a = report_summary(before)
     b = report_summary(after)
     return {
         "before": before.run_id,
         "after": after.run_id,
+        "dataset_verified": verified_dataset,
+        "warnings": [] if verified_dataset else [
+            "These reports lack dataset fingerprints; matching sample ids do not verify matching content."
+        ],
         "sample_count_change": b["samples"] - a["samples"],
         "escalation_rate_before": a["escalation_rate"],
         "escalation_rate_after": b["escalation_rate"],

@@ -223,3 +223,37 @@ def test_empty_report_properties() -> None:
     )
     assert empty.escalation_rate == 0
     assert empty.total_cost_usd is None
+
+
+def test_partial_costs_do_not_pass_a_cost_gate() -> None:
+    value = report("partial", False, 0.01)
+    value.results.append(
+        SampleResult(sample_id="unknown", verdict="pass", checks=[], usage=ProviderUsage())
+    )
+    assert value.total_cost_usd is None
+    assert "cost is unknown" in gate_failures(value, max_cost_usd=1)[0]
+
+
+def test_comparison_requires_same_dataset() -> None:
+    before = report("before", True, 0.5)
+    after = report("after", False, 0.1)
+    assert compare_reports(before, after)["dataset_verified"] is False
+    before.dataset_hash = after.dataset_hash = "same-data"
+    assert compare_reports(before, after)["dataset_verified"] is True
+    after.dataset_hash = "changed-output-or-labels"
+    with pytest.raises(ValueError, match="different sample content"):
+        compare_reports(before, after)
+    after.results[0].sample_id = "different"
+    with pytest.raises(ValueError, match="different sample ids"):
+        compare_reports(before, after)
+
+
+def test_report_recall_counts_abstained_failures() -> None:
+    value = report("abstention", False, 0)
+    value.results[0].expected_labels = ["quality.bad"]
+    value.results[0].checks = [
+        CheckResult(check_id="quality.bad", check_version="1", status="uncertain", severity="error")
+    ]
+    metrics = report_summary(value)["check_metrics"]["quality.bad"]
+    assert metrics["recall"] == 0
+    assert metrics["unresolved_positive"] == 1
