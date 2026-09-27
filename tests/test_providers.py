@@ -12,6 +12,7 @@ from loopeval.providers.anthropic import AnthropicProvider
 from loopeval.providers.base import MissingCredentialError, ProviderError
 from loopeval.providers.decision import HTTPDecisionProvider
 from loopeval.providers.generative import OpenAICompatibleProvider
+from loopeval.providers.mock import MockDecisionProvider, MockGenerativeProvider
 from loopeval.providers.openai_responses import OpenAIResponsesProvider
 
 
@@ -354,3 +355,36 @@ def test_direct_generative_provider_factories(monkeypatch: pytest.MonkeyPatch) -
     )
     assert isinstance(anthropic, AnthropicProvider)
     assert isinstance(responses, OpenAIResponsesProvider)
+
+
+def test_provider_plugins_load_from_role_specific_entry_points(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeEntryPoint:
+        def __init__(self, factory: Any) -> None:
+            self.factory = factory
+
+        def load(self) -> Any:
+            return self.factory
+
+    def fake_entry_points(*, group: str, name: str) -> list[FakeEntryPoint]:
+        assert name == "example"
+        factories = {
+            "loopeval.decision_providers": lambda config: MockDecisionProvider(config),
+            "loopeval.generative_providers": lambda config: MockGenerativeProvider(config),
+        }
+        return [FakeEntryPoint(factories[group])]
+
+    monkeypatch.setattr("loopeval.providers.plugins.entry_points", fake_entry_points)
+    config = ProviderConfig(type="plugin", plugin="example", model="plugin-model")
+    assert isinstance(build_decision_provider(config), MockDecisionProvider)
+    assert isinstance(build_generative_provider(config), MockGenerativeProvider)
+
+
+def test_provider_plugin_reports_missing_registration(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "loopeval.providers.plugins.entry_points", lambda **kwargs: []
+    )
+    config = ProviderConfig(type="plugin", plugin="missing")
+    with pytest.raises(ProviderError, match="is not installed"):
+        build_generative_provider(config)

@@ -247,9 +247,51 @@ any provider or model change.
 
 ## Custom providers
 
-The Python API accepts implementations of LoopEval's small standalone provider
-contracts. This is the extension point for an SDK or endpoint that is not
-OpenAI-compatible:
+There are two extension paths for an SDK or endpoint that is not
+OpenAI-compatible.
+
+### Installable provider plugins
+
+A Python package can register provider factories through standard package entry
+points:
+
+```toml
+[project.entry-points."loopeval.decision_providers"]
+my_decision = "my_package.providers:build_decision_provider"
+
+[project.entry-points."loopeval.generative_providers"]
+my_fallback = "my_package.providers:build_generative_provider"
+```
+
+Each factory receives the validated `ProviderConfig` and returns a
+`DecisionProvider` or `GenerativeProvider`. After installing the package in the
+same environment as LoopEval, select it in `loopeval.yaml`:
+
+```yaml
+providers:
+  decision:
+    type: plugin
+    plugin: my_decision
+    model: my-model-version
+    api_key_env: MY_DECISION_API_KEY
+    options:
+      region: us-east
+  fallback:
+    type: plugin
+    plugin: my_fallback
+    model: my-fallback-version
+    api_key_env: MY_FALLBACK_API_KEY
+```
+
+Plugin-specific settings belong under `options`. Authentication may use the
+referenced environment variable or be managed by the plugin. Run `loopeval
+doctor --live` to load and verify both plugins. A provider plugin is executable
+code, so install only packages you trust.
+
+### Direct Python injection
+
+The Python API also accepts implementations of LoopEval's small provider
+contracts directly:
 
 ```python
 from loopeval import DecisionProvider, LoopEval

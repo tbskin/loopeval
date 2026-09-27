@@ -22,6 +22,7 @@ class ProviderConfig(BaseModel):
         "openai_responses",
         "anthropic",
         "openai_compatible",
+        "plugin",
         "mock",
     ]
     model: str = ""
@@ -34,11 +35,13 @@ class ProviderConfig(BaseModel):
     output_cost_per_million: float | None = Field(default=None, ge=0)
     structured_output: bool = True
     headers: dict[str, str] = Field(default_factory=dict)
+    plugin: str | None = None
+    options: dict[str, Any] = Field(default_factory=dict)
     mock_responses: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_provider(self) -> ProviderConfig:
-        if self.type not in {"disabled", "mock", "openai_compatible"}:
+        if self.type not in {"disabled", "mock", "openai_compatible", "plugin"}:
             if not self.model:
                 raise ValueError(f"{self.type} requires model")
             if not self.api_key_env:
@@ -47,6 +50,8 @@ class ProviderConfig(BaseModel):
             raise ValueError("openai_compatible requires model")
         if self.type == "openai_compatible" and not self.base_url:
             raise ValueError("openai_compatible requires base_url")
+        if self.type == "plugin" and not self.plugin:
+            raise ValueError("plugin provider requires plugin")
         return self
 
     @property
@@ -62,7 +67,7 @@ class ProvidersConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_roles(self) -> ProvidersConfig:
-        if self.decision.type not in {"typesafe", "openrouter_decisions", "mock"}:
+        if self.decision.type not in {"typesafe", "openrouter_decisions", "plugin", "mock"}:
             raise ValueError(f"{self.decision.type} cannot be used as a decision provider")
         if self.fallback.type not in {
             "disabled",
@@ -71,6 +76,7 @@ class ProvidersConfig(BaseModel):
             "openai_responses",
             "anthropic",
             "openai_compatible",
+            "plugin",
             "mock",
         }:
             raise ValueError(f"{self.fallback.type} cannot be used as a fallback provider")

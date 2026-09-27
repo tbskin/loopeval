@@ -379,6 +379,8 @@ def doctor(
     ):
         if provider.type in {"disabled", "mock"}:
             typer.echo(f"{role.title()} provider: {provider.type}")
+        elif provider.type == "plugin" and not provider.api_key_env:
+            typer.echo(f"{role.title()} provider: plugin/{provider.plugin} (plugin-managed auth)")
         elif provider.type == "openai_compatible" and not provider.api_key_env:
             typer.echo(
                 f"{role.title()} provider: {provider.type}/{provider.model} (unauthenticated)"
