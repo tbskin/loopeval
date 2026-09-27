@@ -8,9 +8,11 @@ import pytest
 from loopeval.config import ProviderConfig
 from loopeval.models import QuestionKind, TypedQuestion
 from loopeval.providers import build_decision_provider, build_generative_provider
+from loopeval.providers.anthropic import AnthropicProvider
 from loopeval.providers.base import MissingCredentialError, ProviderError
 from loopeval.providers.decision import HTTPDecisionProvider
 from loopeval.providers.generative import OpenAICompatibleProvider
+from loopeval.providers.openai_responses import OpenAIResponsesProvider
 
 
 class FakeAsyncClient:
@@ -221,3 +223,134 @@ def test_generative_parse_rejects_bad_content() -> None:
         OpenAICompatibleProvider._parse([])
     with pytest.raises(ProviderError, match="no JSON"):
         OpenAICompatibleProvider._parse("not json")
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_uses_native_structured_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_TEST_KEY", "anthropic-secret")
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+    FakeAsyncClient.responses = [
+        response(
+            200,
+            {
+                "content": [{"type": "text", "text": '{"ok":true}'}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 12, "output_tokens": 4},
+            },
+        )
+    ]
+    provider = AnthropicProvider(
+        ProviderConfig(
+            type="anthropic",
+            model="claude-haiku-4-5",
+            api_key_env="ANTHROPIC_TEST_KEY",
+            input_cost_per_million=1,
+            output_cost_per_million=2,
+        )
+    )
+    parsed, usage, _ = await provider.generate_structured(
+        system="system",
+        user="user",
+        schema={"type": "object"},
+        schema_name="answer",
+    )
+    assert parsed == {"ok": True}
+    assert usage.cost_usd == pytest.approx(0.00002)
+    url, headers, body = FakeAsyncClient.requests[0]
+    assert url == "https://api.anthropic.com/v1/messages"
+    assert headers["x-api-key"] == "anthropic-secret"
+    assert headers["anthropic-version"] == "2023-06-01"
+    assert body["output_config"]["format"]["schema"] == {"type": "object"}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_rejects_truncated_structured_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_TEST_KEY", "anthropic-secret")
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+    FakeAsyncClient.responses = [
+        response(
+            200,
+            {
+                "content": [{"type": "text", "text": "{}"}],
+                "stop_reason": "max_tokens",
+            },
+        )
+    ]
+    provider = AnthropicProvider(
+        ProviderConfig(
+            type="anthropic",
+            model="claude-haiku-4-5",
+            api_key_env="ANTHROPIC_TEST_KEY",
+            max_retries=0,
+        )
+    )
+    with pytest.raises(ProviderError, match="max_tokens"):
+        await provider.generate_structured(
+            system="system",
+            user="user",
+            schema={"type": "object"},
+            schema_name="answer",
+        )
+
+
+@pytest.mark.asyncio
+async def test_openai_responses_provider_uses_native_structured_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_TEST_KEY", "openai-secret")
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+    FakeAsyncClient.responses = [
+        response(
+            200,
+            {
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": '{"ok":true}'}],
+                    }
+                ],
+                "usage": {"input_tokens": 9, "output_tokens": 3},
+            },
+        )
+    ]
+    provider = OpenAIResponsesProvider(
+        ProviderConfig(
+            type="openai_responses",
+            model="gpt-4.1-mini",
+            api_key_env="OPENAI_TEST_KEY",
+        )
+    )
+    parsed, usage, _ = await provider.generate_structured(
+        system="system",
+        user="user",
+        schema={"type": "object"},
+        schema_name="answer",
+    )
+    assert parsed == {"ok": True}
+    assert usage.input_tokens == 9
+    url, headers, body = FakeAsyncClient.requests[0]
+    assert url == "https://api.openai.com/v1/responses"
+    assert headers["Authorization"] == "Bearer openai-secret"
+    assert body["text"]["format"] == {
+        "type": "json_schema",
+        "name": "answer",
+        "strict": True,
+        "schema": {"type": "object"},
+    }
+
+
+def test_direct_generative_provider_factories(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TEST_KEY", "secret")
+    anthropic = build_generative_provider(
+        ProviderConfig(type="anthropic", model="claude-haiku-4-5", api_key_env="TEST_KEY")
+    )
+    responses = build_generative_provider(
+        ProviderConfig(type="openai_responses", model="gpt-test", api_key_env="TEST_KEY")
+    )
+    assert isinstance(anthropic, AnthropicProvider)
+    assert isinstance(responses, OpenAIResponsesProvider)

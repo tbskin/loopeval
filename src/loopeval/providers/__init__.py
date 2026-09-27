@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from ..config import ProviderConfig
+from .anthropic import AnthropicProvider
 from .base import DecisionProvider, GenerativeProvider, ProviderError
 from .decision import HTTPDecisionProvider
 from .generative import OpenAICompatibleProvider
 from .mock import MockDecisionProvider, MockGenerativeProvider
+from .openai_responses import OpenAIResponsesProvider
 
 
 def build_decision_provider(config: ProviderConfig) -> DecisionProvider:
@@ -22,6 +24,10 @@ def build_generative_provider(config: ProviderConfig) -> GenerativeProvider | No
         return MockGenerativeProvider(config)
     if config.type in {"openrouter", "openai", "openai_compatible"}:
         return OpenAICompatibleProvider(config)
+    if config.type == "openai_responses":
+        return OpenAIResponsesProvider(config)
+    if config.type == "anthropic":
+        return AnthropicProvider(config)
     raise ValueError(f"{config.type!r} is not a generative provider")
 
 

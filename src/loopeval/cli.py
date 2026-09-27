@@ -93,6 +93,18 @@ FALLBACK_PRESETS: dict[str, dict[str, object]] = {
         "api_key_env": "OPENAI_API_KEY",
         "timeout_seconds": 45,
     },
+    "openai-responses": {
+        "type": "openai_responses",
+        "model": "gpt-4.1-mini",
+        "api_key_env": "OPENAI_API_KEY",
+        "timeout_seconds": 45,
+    },
+    "anthropic": {
+        "type": "anthropic",
+        "model": "claude-haiku-4-5",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "timeout_seconds": 45,
+    },
     "openrouter": {
         "type": "openrouter",
         "model": "openai/gpt-4.1-mini",
@@ -237,7 +249,10 @@ def init(
         str,
         typer.Option(
             "--fallback",
-            help="Fallback route: openai, openrouter, openai-compatible, or none.",
+            help=(
+                "Fallback route: openai, openai-responses, anthropic, openrouter, "
+                "openai-compatible, or none."
+            ),
         ),
     ] = "openai",
     decision_model: Annotated[str | None, typer.Option("--decision-model")] = None,

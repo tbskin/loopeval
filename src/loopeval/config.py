@@ -19,6 +19,8 @@ class ProviderConfig(BaseModel):
         "openrouter_decisions",
         "openrouter",
         "openai",
+        "openai_responses",
+        "anthropic",
         "openai_compatible",
         "mock",
     ]
@@ -27,6 +29,7 @@ class ProviderConfig(BaseModel):
     base_url: str | None = None
     timeout_seconds: float = Field(default=30.0, gt=0)
     max_retries: int = Field(default=2, ge=0, le=8)
+    max_output_tokens: int = Field(default=4096, ge=1)
     input_cost_per_million: float | None = Field(default=None, ge=0)
     output_cost_per_million: float | None = Field(default=None, ge=0)
     structured_output: bool = True
@@ -65,6 +68,8 @@ class ProvidersConfig(BaseModel):
             "disabled",
             "openrouter",
             "openai",
+            "openai_responses",
+            "anthropic",
             "openai_compatible",
             "mock",
         }:

@@ -309,6 +309,27 @@ def test_init_openai_compatible_and_invalid_provider(tmp_path: Path) -> None:
     assert "--decision must be one of" in invalid.output
 
 
+def test_init_selects_anthropic_and_openai_responses_fallbacks(tmp_path: Path) -> None:
+    anthropic = tmp_path / "anthropic"
+    result = runner.invoke(app, ["init", str(anthropic), "--fallback", "anthropic"])
+    assert result.exit_code == 0, result.output
+    config = yaml.safe_load((anthropic / "loopeval.yaml").read_text())
+    assert config["providers"]["fallback"] == {
+        "type": "anthropic",
+        "model": "claude-haiku-4-5",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "timeout_seconds": 45,
+    }
+
+    responses = tmp_path / "responses"
+    result = runner.invoke(
+        app, ["init", str(responses), "--fallback", "openai-responses"]
+    )
+    assert result.exit_code == 0, result.output
+    config = yaml.safe_load((responses / "loopeval.yaml").read_text())
+    assert config["providers"]["fallback"]["type"] == "openai_responses"
+
+
 def test_python_api_and_active_loop_error(tmp_path: Path) -> None:
     project = tmp_path / "demo"
     runner.invoke(app, ["init", str(project), "--offline"])
