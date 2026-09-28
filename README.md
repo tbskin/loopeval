@@ -11,11 +11,7 @@ review and validation, those checks join the next run's library.
 LLM-as-judge evaluations can become expensive across a large volume of traces,
 leading teams to sample instead. LoopEval aims to make evaluating every trace
 affordable, with fewer cases needing the LLM as the check library grows. It
-learns checks, not Jev's model weights.
-
-The comparison is evaluation spend versus an LLM judge, not the cost of running
-your app. Measure both cost at equal trace coverage and trace coverage at equal
-budget. Inspecting 100% of traces does not guarantee finding every failure.
+learns checks overtime.
 
 LoopEval is bring your own key (BYOK). It runs in your environment with no
 LoopEval account or hosted service. Your model providers bill you directly.
