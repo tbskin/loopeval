@@ -20,9 +20,6 @@ budget. Inspecting 100% of traces does not guarantee finding every failure.
 LoopEval is bring your own key (BYOK). It runs in your environment with no
 LoopEval account or hosted service. Your model providers bill you directly.
 
-> **Status: experimental, unreleased.** Install from source for now. Offline
-> tests verify software behavior, not real-model accuracy, throughput, or savings.
-
 **Setting this up with a coding agent?** Copy the
 [integration prompt](docs/INTEGRATION_PROMPT.md) into your application's repository.
 
@@ -34,15 +31,20 @@ API for response quality, RAG grounding, structured outputs, and agent traces.
 
 ```mermaid
 flowchart LR
-    A["Your app's traces and outcomes"] --> B["Exact local checks"]
-    B --> C["Jev: known semantic checks"]
-    B -->|"Exact failure"| R["Results and report"]
-    C -->|"Resolved"| R
-    C -->|"Uncertain, uncovered, or audited"| D["Your LLM"]
-    D --> R
-    D --> E["Proposed check"]
-    E --> F["Human review + held-out validation"]
-    F -->|"Promote for future runs"| C
+    appTraces["Your app's traces and outcomes"]
+    subgraph loopEval["LoopEval"]
+        B["Exact local checks"] --> C["Jev: known semantic checks"]
+        B -->|"Exact failure"| R["Results and report"]
+        C -->|"Resolved"| R
+        C -->|"Uncertain, uncovered, or audited"| D["Your LLM"]
+        D --> R
+        D --> E["Proposed check"]
+        E --> F["Human review + held-out validation"]
+        F -->|"Promote for future runs"| C
+    end
+    appTraces --> B
+    classDef entry fill:#dbeafe,stroke:#2563eb,stroke-width:3px,color:#172554
+    class appTraces entry
 ```
 
 LoopEval evaluates every sample you submit. It does not collect production
@@ -66,7 +68,7 @@ LLM discovery. The offline tour below needs no keys.
 
 ## Install and try it without keys
 
-From a source checkout, in a virtual environment:
+LoopEval is not yet published on PyPI. Install from source in a virtual environment:
 
 ```bash
 git clone https://github.com/tbskin/loopeval.git
@@ -198,6 +200,9 @@ saved. Without gates, a completed run exits `0` even when samples fail.
 See [CI and exit codes](docs/CI.md).
 
 ## Measure the benefit
+
+Offline tests verify software behavior. Real-model accuracy, throughput, and
+savings need to be measured with real providers and representative traces.
 
 Compare LoopEval with an LLM judging the same evaluation policy on every trace.
 Then compare it with that LLM judging a budget-limited sample, such as 1%, 5%,
